@@ -54,6 +54,7 @@ static void on_title(const char *title)
     xSemaphoreTake(s_title_lock, portMAX_DELAY);
     bool differs = strcmp(clean, s_title) != 0;
     if (differs) {
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - clean is char[sizeof(s_title)]
         memcpy(s_title, clean, sizeof(s_title));
     }
     xSemaphoreGive(s_title_lock);
@@ -121,11 +122,13 @@ void player_set_stations(const radio_station_t *list, int count)
     }
     char current[STATION_URL_LEN] = "";
     if (s_index >= 0 && s_index < s_count) {
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - both are char[STATION_URL_LEN] (radio_station_t.url)
         memcpy(current, s_stations[s_index].url, sizeof(current));
     } else {
         settings_get_station(current, sizeof(current));
     }
     halt();
+    // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - count is clamped to MAX_STATIONS above, the size s_stations was allocated with
     memcpy(s_stations, list, sizeof(radio_station_t) * count);
     s_count = count;
     s_index = -1;

@@ -53,7 +53,7 @@ uint32_t tab5_keymap_pop(tab5_keymap_t *km)
 
 void tab5_keymap_reset(tab5_keymap_t *km)
 {
-    memset(km, 0, sizeof(*km));
+    *km = (tab5_keymap_t){0};
     km->repeat_key = -1;
 }
 

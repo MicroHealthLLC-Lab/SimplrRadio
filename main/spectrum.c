@@ -58,9 +58,7 @@ void spectrum_init(void)
     s_mutex = xSemaphoreCreateMutex();
     dsps_fft2r_init_fc32(NULL, SPECTRUM_FFT_N);
     dsps_wind_hann_f32(s_window, SPECTRUM_FFT_N);
-    compute_band_edges();
-    memset(s_bands, 0, sizeof(s_bands));
-    memset(s_peaks, 0, sizeof(s_peaks));
+    compute_band_edges();   // s_bands and s_peaks are static: they start at zero
     ESP_LOGI(TAG, "Spectrum init: %d-point FFT, %d bands", SPECTRUM_FFT_N, SPECTRUM_BANDS);
 }
 
@@ -140,8 +138,9 @@ void spectrum_feed(const int16_t *samples, int num_stereo_samples)
 void spectrum_snapshot(float *bands, float *peaks)
 {
     if (!s_mutex) {
-        memset(bands, 0, sizeof(float) * SPECTRUM_BANDS);
-        memset(peaks, 0, sizeof(float) * SPECTRUM_BANDS);
+        for (int b = 0; b < SPECTRUM_BANDS; b++) {
+            bands[b] = peaks[b] = 0.0f;
+        }
         return;
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -152,7 +151,9 @@ void spectrum_snapshot(float *bands, float *peaks)
             s_peaks[b] *= 0.92f;
         }
     }
+    // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - the caller's arrays are float[SPECTRUM_BANDS] (spectrum.h), like s_bands
     memcpy(bands, s_bands, sizeof(s_bands));
+    // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - the caller's arrays are float[SPECTRUM_BANDS] (spectrum.h), like s_peaks
     memcpy(peaks, s_peaks, sizeof(s_peaks));
     xSemaphoreGive(s_mutex);
 }

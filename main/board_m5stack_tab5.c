@@ -197,8 +197,11 @@ static void eq_build(eq_preset_t preset, int sample_rate)
 {
     float fs = (float)sample_rate;
     int bands = 0;
-    memset(s_eq_wL, 0, sizeof(s_eq_wL));
-    memset(s_eq_wR, 0, sizeof(s_eq_wR));
+    // Fresh filter state (not a secret): zero every biquad delay line
+    for (int b = 0; b < EQ_MAX_BANDS; b++) {
+        s_eq_wL[b][0] = s_eq_wL[b][1] = 0.0f;
+        s_eq_wR[b][0] = s_eq_wR[b][1] = 0.0f;
+    }
     switch (preset) {
     case EQ_BASS:
         // Low shelf +4 dB at 120 Hz: warmth for headphones without clipping
@@ -351,6 +354,7 @@ esp_err_t audio_write(const int16_t *samples, size_t num_samples, size_t *sample
     (void)timeout_ms;
     const void *data = samples;
     if (s_eq_bands > 0 && num_samples > 0 && num_samples <= EQ_BUF_SAMPLES) {
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - num_samples <= EQ_BUF_SAMPLES, s_eq_buf's length, is checked above
         memcpy(s_eq_buf, samples, num_samples * sizeof(int16_t));
         eq_apply(s_eq_buf, (int)num_samples);
         data = s_eq_buf;

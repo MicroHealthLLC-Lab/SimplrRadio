@@ -61,3 +61,17 @@ The Tests workflow audits ESP-IDF and every component against the NVD (reviewed 
 Bluetooth, scans commits for secrets (gitleaks), and pins every action, image and component.
 MicroHealth's shared security scan (SAST, Trivy, SBOM, ZAP) runs on `main`, `integration` and
 pull requests.
+
+### SAST review (2026-10-20)
+
+The security scan reported 41 Opengrep findings (3 were in `slave_ota.c`, removed with the C6
+firmware update). The other 38 were checked by hand; the same rules and Opengrep now report 0:
+
+| Finding | Outcome |
+|---|---|
+| `atoi` on typed station and menu numbers, and on the station count (no overflow detection) | One helper: three digits at most, `strtol` with an end check, 0 to 999, else rejected |
+| `snprintf` with formats from macros (the muted label, `IPSTR`) | A literal label; `esp_ip4addr_ntoa` |
+| Unbounded `strlen` on a directory URL, a stream URL, the SSID being joined, and a literal | `strnlen` with the destination's limit; `sizeof` on the literal |
+| `memcpy` of the SSID and password into the WiFi config | Clamped to the config's fields as well as checked against 32 / 63 characters before |
+| `memset` (can be optimized away when clearing secrets) on spectrum, key map and EQ filter state | None held a secret; replaced by a struct assignment and loops, or dropped (statics start at zero). Secrets are cleared with `mbedtls_platform_zeroize` |
+| 21 more: `memcpy` between buffers of the same fixed size or with the bound checked on the line before, `strlen` on strings the firmware NUL-terminates | Not applicable: suppressed inline with the full rule id and the bound |

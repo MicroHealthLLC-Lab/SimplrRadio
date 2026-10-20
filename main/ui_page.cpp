@@ -100,6 +100,7 @@ void Notice::add(const char* text)
     if (text == nullptr) {
         return;
     }
+    // noopengrep: mh.gitlab.c_buffer_rule-strlen-wcslen - text is a C string the firmware built (a literal or std::string::c_str()); the notice keeps a bounded tail
     size_t len = strlen(text);
     if (len == 0) {
         return;

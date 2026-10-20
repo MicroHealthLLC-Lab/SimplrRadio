@@ -266,6 +266,10 @@ class Dependencies(unittest.TestCase):
                 self.assertEqual(locked.get("lvgl/lvgl"), "9.6.0~1")
                 self.assertNotIn("idf", locked)
         self.assertEqual(check_dependencies.KNOWN_DRIFT, {}, "pins keep both resolve passes in agreement")
+        # The one reviewed exception: a CMake helper on the T-Deck that the first pass can't take
+        self.assertEqual(check_dependencies.KNOWN_DRIFT_TDECK, {"espressif/cmake_utilities": ("0.5.3", "1.1.1")})
+        self.assertEqual(check_dependencies.lock_versions(repo.read("dependencies.lock.tdeck"))
+                         .get("espressif/cmake_utilities"), "0.5.3")
 
     def run_check(self, compiled, lock_text, defaults="CONFIG_A=y\n", generated="CONFIG_A=y\n", board="tab5",
                   board_defaults=""):

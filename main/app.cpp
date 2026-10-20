@@ -242,6 +242,17 @@ static bool is_number(const std::string& s)
     return !s.empty() && s.size() <= 3 && std::all_of(s.begin(), s.end(), ::isdigit);
 }
 
+// A typed number (up to three digits, is_number()), or -1
+static int number_value(const std::string& s)
+{
+    if (!is_number(s)) {
+        return -1;
+    }
+    char* end = nullptr;
+    long v = strtol(s.c_str(), &end, 10);
+    return end && *end == '\0' && v >= 0 && v <= 999 ? (int)v : -1;
+}
+
 static std::string search_summary()
 {
     station_search_t search;
@@ -1187,7 +1198,7 @@ static void answer(const std::string& raw)
 {
     std::string key = raw;
     std::transform(key.begin(), key.end(), key.begin(), ::tolower);
-    int n = is_number(key) ? atoi(key.c_str()) : -1;
+    int n = number_value(key);
     if (key == "0") {
         back();
         return;
@@ -1415,7 +1426,7 @@ static void submit()
         }
 
         case Screen::SearchCount: {
-            int count = is_number(text) ? atoi(text.c_str()) : 0;
+            int count = number_value(text);
             if (count < 1 || count > SEARCH_COUNT_MAX) {
                 s_notice.add(("A number from 1 to " + std::to_string(SEARCH_COUNT_MAX) + ".\n").c_str());
                 render();
@@ -1525,7 +1536,7 @@ static void now_playing_key(uint32_t key)
         return;
     }
     if (key == KEY_ENTER && !s_np_typed.empty()) {
-        int n = atoi(s_np_typed.c_str());
+        int n = number_value(s_np_typed);
         s_np_typed.clear();
         if (n >= 1 && n <= player_count()) {
             player_select(n - 1);

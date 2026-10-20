@@ -111,6 +111,7 @@ static esp_err_t store_saved()
         }
         buf[off] = (n.has_password ? 1 : 0) | (n.hidden ? 2 : 0);
         buf[off + 1] = (uint8_t)n.ssid.size();
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - at most MAX_SAVED entries of 2 + 32 bytes (longer SSIDs skipped above), the size buf has
         memcpy(buf + off + 2, n.ssid.data(), n.ssid.size());
         off += 2 + n.ssid.size();
         count++;
@@ -235,7 +236,7 @@ static void on_event(void* arg, esp_event_base_t base, int32_t id, void* data)
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t* ev = (const wifi_event_sta_disconnected_t*)data;
         if (s_state == State::Connecting && ev && ev->ssid_len &&
-            (ev->ssid_len != strlen(s_target) || memcmp(ev->ssid, s_target, ev->ssid_len) != 0)) {
+            (ev->ssid_len != strnlen(s_target, sizeof(s_target)) || memcmp(ev->ssid, s_target, ev->ssid_len) != 0)) {
             return;   // A late event from the network left before this attempt
         }
         s_last_reason = ev ? ev->reason : 0;
@@ -254,7 +255,7 @@ static void on_event(void* arg, esp_event_base_t base, int32_t id, void* data)
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t* ev = (const ip_event_got_ip_t*)data;
         char ip[16];
-        snprintf(ip, sizeof(ip), IPSTR, IP2STR(&ev->ip_info.ip));
+        esp_ip4addr_ntoa(&ev->ip_info.ip, ip, sizeof(ip));
         wifi_config_t cfg = {};
         esp_wifi_get_config(WIFI_IF_STA, &cfg);
         std::string ssid((const char*)cfg.sta.ssid, strnlen((const char*)cfg.sta.ssid, sizeof(cfg.sta.ssid)));
@@ -430,9 +431,10 @@ esp_err_t wifi::connect(const std::string& ssid, const std::string& password, st
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 
+    // Lengths were checked above (SSID 1-32, password empty or 8-63); clamped to the fields anyway
     wifi_config_t cfg = {};
-    memcpy(cfg.sta.ssid, ssid.data(), ssid.size());
-    memcpy(cfg.sta.password, password.data(), password.size());
+    std::copy_n(ssid.begin(), std::min(ssid.size(), sizeof(cfg.sta.ssid)), cfg.sta.ssid);
+    std::copy_n(password.begin(), std::min(password.size(), sizeof(cfg.sta.password) - 1), cfg.sta.password);
     // A password means WPA2 or better: an impostor offering WEP/WPA1/open is refused.
     // WPA3 (SAE) networks are joined too; management frames are protected when the AP can.
     cfg.sta.threshold.authmode = password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
