@@ -16,12 +16,12 @@
 #                                            └─► persistence
 #
 #   install          clean resolve in the pinned ESP-IDF image, for each board (Tab5,
-#                    Waveshare): the locked components install with verified hashes, the
+#                    T-Deck): the locked components install with verified hashes, the
 #                    build compiles nothing unexpected, and every sdkconfig default takes effect.
 #   lint             actionlint (workflows), ruff (Python), cppcheck (C and C++, warnings block).
 #   typecheck        host compile of the firmware's hardware-independent sources and the
 #                    tests with -Wall -Wextra -Werror; Python byte-compile.
-#   unit-tests       host tests (sign-in page parser, page model, Tab5 key map, text
+#   unit-tests       host tests (sign-in page parser, page model, Tab5 and T-Deck key maps, text
 #                    cleanup) with ASan and UBSan, and the Python guard tests that keep
 #                    AI_RULES.md's rules (supply chain, settings access, tasks, logging) and the
 #                    CI scripts.
@@ -38,7 +38,7 @@
 #   secret-scan      gitleaks over the commits this push / pull request introduces.
 #
 # Actions are pinned by commit and images by digest (test/guards/test_supply_chain.py).
-# Hardware behaviour is not tested here: it can only be confirmed on a real Tab5 / Waveshare.
+# Hardware behaviour is not tested here: it can only be confirmed on a real Tab5 / T-Deck.
 ##
 
 name: Tests
@@ -94,7 +94,7 @@ jobs:
       # One board at a time from an empty managed_components/ (the boards' components differ)
       - name: Resolve components and check them, both boards
         run: |
-          for board in tab5 waveshare; do
+          for board in tab5 tdeck; do
             rm -rf managed_components
             cp "dependencies.lock.$board" "$RUNNER_TEMP/dependencies.lock.$board"
             cp "sdkconfig.$board" "$RUNNER_TEMP/sdkconfig.$board"
@@ -223,7 +223,7 @@ jobs:
               trap "chown -R \"\$OWNER\" /project" EXIT
               git config --global --add safe.directory "*"
               pip install --quiet "esp-idf-sbom==$SBOM_VERSION"
-              for board in tab5 waveshare; do
+              for board in tab5 tdeck; do
                 rm -rf managed_components
                 export BOARD=$board
                 B="-B build-$board"
@@ -231,17 +231,19 @@ jobs:
                 idf.py $B merge-bin -o "SimplrRadio-$board-ci-release.bin"
                 idf.py $B launcher-bin
                 python -m esp_idf_size --format json -o "build-$board/size.json" "build-$board/SimplrRadio.map"
-                riscv32-esp-elf-nm --defined-only "build-$board/SimplrRadio.elf" > "build-$board/symbols.txt"
+                nm=riscv32-esp-elf-nm   # ESP32-P4 (Tab5); the T-Deck's ESP32-S3 is Xtensa
+                [ "$board" = tdeck ] && nm=xtensa-esp32s3-elf-nm
+                $nm --defined-only "build-$board/SimplrRadio.elf" > "build-$board/symbols.txt"
                 esp-idf-sbom create "build-$board/project_description.json" -o "build-$board/sbom.spdx"
               done'
       - name: Static internal RAM budget
         run: |
           python3 .github/scripts/check_firmware.py size build-tab5/size.json --board tab5
-          python3 .github/scripts/check_firmware.py size build-waveshare/size.json --board waveshare
+          python3 .github/scripts/check_firmware.py size build-tdeck/size.json --board tdeck
       - name: No compiler warnings in main/
         run: |
           python3 .github/scripts/check_firmware.py warnings build-output-tab5.log
-          python3 .github/scripts/check_firmware.py warnings build-output-waveshare.log
+          python3 .github/scripts/check_firmware.py warnings build-output-tdeck.log
       - name: No key material in the images
         run: |
           images=$(ls build-*/SimplrRadio.bin build-*/bootloader/bootloader.bin build-*/SimplrRadio-*-ci-release.bin \
@@ -265,10 +267,10 @@ jobs:
             build-tab5/symbols.txt
             build-tab5/size.json
             sdkconfig.tab5
-            build-waveshare/sbom.spdx
-            build-waveshare/symbols.txt
-            build-waveshare/size.json
-            sdkconfig.waveshare
+            build-tdeck/sbom.spdx
+            build-tdeck/symbols.txt
+            build-tdeck/size.json
+            sdkconfig.tdeck
           if-no-files-found: error
           retention-days: 14
 
@@ -290,7 +292,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --quiet "esp-idf-sbom==$ESP_IDF_SBOM_VERSION"
-          for board in build-tab5 build-waveshare; do
+          for board in build-tab5 build-tdeck; do
             for attempt in 1 2 3; do
               # Exits 1 when it finds vulnerabilities; check_audit.py judges the report
               "$RUNNER_TEMP/venv/bin/esp-idf-sbom" --no-progress check --format json -o "vulns-$board.json" \
@@ -304,7 +306,7 @@ jobs:
       - name: High / critical CVEs
         run: |
           python3 .github/scripts/check_audit.py vulns-build-tab5.json
-          python3 .github/scripts/check_audit.py vulns-build-waveshare.json
+          python3 .github/scripts/check_audit.py vulns-build-tdeck.json
 
   # h) network-surface: both linked firmwares and their generated sdkconfigs keep the attack
   #    surface closed (station-only WiFi, no listening sockets, servers, OTA, Bluetooth).
@@ -326,8 +328,8 @@ jobs:
         run: |
           python3 .github/scripts/check_firmware.py surface tests-build/build-tab5/symbols.txt \
             tests-build/sdkconfig.tab5
-          python3 .github/scripts/check_firmware.py surface tests-build/build-waveshare/symbols.txt \
-            tests-build/sdkconfig.waveshare
+          python3 .github/scripts/check_firmware.py surface tests-build/build-tdeck/symbols.txt \
+            tests-build/sdkconfig.tdeck
 
   # i) secret-scan: gitleaks over the commits this push / pull request introduces (not the
   #    whole history). Image pinned by tag and digest.

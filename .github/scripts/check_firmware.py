@@ -3,7 +3,7 @@
 Checks on the built firmware, used by the Tests workflow (build and network-surface jobs).
 Adapted from SimplrSSH's check_firmware.py.
 
-  check_firmware.py size <size.json> [--board tab5|waveshare] [--budget BYTES]
+  check_firmware.py size <size.json> [--board tab5|tdeck] [--budget BYTES]
       Static internal RAM (DIRAM: .data + .bss + IRAM code placed in DIRAM), from
       `python -m esp_idf_size --format json`, must stay within the board's budget
       (AI_RULES.md, Memory and tasks).
@@ -28,11 +28,11 @@ import os
 import re
 import sys
 
-# Static internal RAM ceiling per board. The ESP32-P4's DIRAM is 563 KB; the radio used
-# 133,746 bytes statically on the Tab5 when this was set (2026-10-20: LVGL, esp_hosted,
-# WiFi/LWIP, mbedTLS, the MP3 decoder). The headroom absorbs toolchain noise; raise it only
-# deliberately, with the reason.
-BUDGETS = {"tab5": 140 * 1024, "waveshare": 140 * 1024}
+# Static internal RAM ceiling per board. Used when this was set (2026-10-20): Tab5 115,080 bytes
+# of the ESP32-P4's 563 KB DIRAM (LVGL, esp_hosted, WiFi/LWIP, mbedTLS, the MP3 decoder); T-Deck
+# 134,575 bytes of the ESP32-S3's (the WiFi driver itself runs there). The headroom absorbs
+# toolchain noise; raise it only deliberately, with the reason.
+BUDGETS = {"tab5": 140 * 1024, "tdeck": 145 * 1024}
 
 WARNING_RE = re.compile(r"(?:^|/)(main/[^:\s]+):(\d+):\d+: warning: (.*?)(?: \[(-W[^\]]+)\])?$")
 
@@ -48,8 +48,7 @@ KEY_MATERIAL = [
     (rb"gh[pousr]_[A-Za-z0-9]{36}", "GitHub token"),
 ]
 
-# Linked symbols that would open the attack surface AI_RULES.md keeps closed. The ESP32-C6
-# firmware update (esp_hosted_slave_ota_*) is allowed: it sends the image embedded in the app.
+# Linked symbols that would open the attack surface AI_RULES.md keeps closed
 FORBIDDEN_SYMBOLS = [
     (r"lwip_listen|lwip_accept|lwip_bind", "listening socket"),
     (r"httpd_\w+|esp_https_server\w*", "HTTP server"),
@@ -77,7 +76,10 @@ REQUIRED_CONFIG = {
     "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE": "y",
     "CONFIG_ESP_TLS_INSECURE": "n",
     "CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY": "n",
-    # WiFi runs on the ESP32-C6 through esp_hosted / esp_wifi_remote, whose options matter too
+}
+# The Tab5's WiFi runs on its ESP32-C6 through esp_hosted / esp_wifi_remote, whose options
+# matter too (the T-Deck's ESP32-S3 has WiFi built in)
+REQUIRED_CONFIG_P4 = {
     "CONFIG_WIFI_RMT_SOFTAP_SUPPORT": "n",
     "CONFIG_WIFI_RMT_NVS_ENABLED": "n",
     "CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE": "n",
@@ -115,8 +117,11 @@ def read_sdkconfig(path):
 
 
 def sdkconfig_problems(values):
+    required = dict(REQUIRED_CONFIG)
+    if values.get("CONFIG_IDF_TARGET") == '"esp32p4"':
+        required.update(REQUIRED_CONFIG_P4)
     return [f"{option}={values.get(option, 'n')} (must be {wanted})"
-            for option, wanted in REQUIRED_CONFIG.items() if values.get(option, "n") != wanted]
+            for option, wanted in required.items() if values.get(option, "n") != wanted]
 
 
 def defined_symbols(nm_output):

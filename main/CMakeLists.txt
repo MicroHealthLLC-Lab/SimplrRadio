@@ -6,11 +6,14 @@ if(NOT BOARD)
 endif()
 
 if(BOARD STREQUAL "tab5")
+    # WiFi through the ESP32-C6 co-processor (esp_hosted over SDIO)
     set(BOARD_SRCS "board_m5stack_tab5.c" "tab5_keyboard.c" "tab5_keymap.c")
-    set(BOARD_REQUIRES espressif__m5stack_tab5 esp_driver_i2c)
+    set(BOARD_REQUIRES espressif__m5stack_tab5 esp_driver_i2c esp_hosted)
 else()
-    set(BOARD_SRCS "board_waveshare_p4_720.c")
-    set(BOARD_REQUIRES esp_lcd_st7703 espressif__es8311 driver)
+    # LilyGO T-Deck: WiFi built into the ESP32-S3
+    set(BOARD_SRCS "board_tdeck.c" "tdeck_keyboard.c" "tdeck_keymap.c")
+    set(BOARD_REQUIRES espressif__esp_bsp_generic espressif__esp_lcd_touch_gt911 esp_driver_i2c
+                       esp_driver_i2s esp_driver_gpio)
 endif()
 
 idf_component_register(
@@ -26,7 +29,6 @@ idf_component_register(
         "secret_vault.cpp"
         "settings.cpp"
         "settings_nvs.cpp"
-        "slave_ota.c"
         "spectrum.c"
         "stream.c"
         "text.c"
@@ -41,7 +43,6 @@ idf_component_register(
         esp_driver_i2s
         esp_event
         esp_http_client
-        esp_hosted
         esp_lcd
         esp_netif
         esp_partition
@@ -58,10 +59,6 @@ idf_component_register(
         nvs_flash
         ${BOARD_REQUIRES}
 )
-
-# The ESP32-C6 WiFi firmware travels inside the app (slave_ota.c), so every install method
-# brings it along and the app image's checksum covers it
-target_add_binary_data(${COMPONENT_TARGET} "${CMAKE_CURRENT_LIST_DIR}/../slave_fw/network_adapter.bin" BINARY)
 
 # LVGL's allocator (lv_mem_psram.c) is only referenced from the lvgl library, which links
 # after this one: keep it in the image

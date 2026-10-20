@@ -9,11 +9,11 @@ else()
     set(PROJECT_VER "2.0.0")
 endif()
 
-# Board: BOARD=tab5 (default) or BOARD=waveshare, from the environment. Both are ESP32-P4, so the
-# target can't tell them apart. Each board has its own build directory, its settings
-# (sdkconfig.defaults + sdkconfig.defaults.<board>, applied to the committed sdkconfig.<board>)
-# and its component lock (dependencies.lock.<board>):
-#   BOARD=waveshare idf.py -B build-waveshare build
+# Board: BOARD=tab5 (default, ESP32-P4) or BOARD=tdeck (LilyGO T-Deck, ESP32-S3), from the
+# environment. Each board has its own build directory, its settings (sdkconfig.defaults +
+# sdkconfig.defaults.<board>, applied to the committed sdkconfig.<board>) and its component lock
+# (dependencies.lock.<board>):
+#   BOARD=tdeck idf.py -B build-tdeck build
 # The choice is written to board_config.cmake (untracked) for main/CMakeLists.txt, which is
 # evaluated by separate cmake runs that can't see -D variables.
 if(DEFINED ENV{BOARD})
@@ -21,9 +21,18 @@ if(DEFINED ENV{BOARD})
 else()
     set(BOARD "tab5")
 endif()
-if(NOT BOARD STREQUAL "tab5" AND NOT BOARD STREQUAL "waveshare")
-    message(FATAL_ERROR "BOARD must be tab5 or waveshare (got '${BOARD}')")
+if(BOARD STREQUAL "tab5")
+    set(BOARD_TARGET "esp32p4")
+elseif(BOARD STREQUAL "tdeck")
+    set(BOARD_TARGET "esp32s3")
+else()
+    message(FATAL_ERROR "BOARD must be tab5 or tdeck (got '${BOARD}')")
 endif()
+# The board decides the chip: IDF_TARGET from the environment (the CI action sets it) must agree
+if(DEFINED ENV{IDF_TARGET} AND NOT "$ENV{IDF_TARGET}" STREQUAL "${BOARD_TARGET}")
+    message(FATAL_ERROR "BOARD=${BOARD} is an ${BOARD_TARGET}, but IDF_TARGET is '$ENV{IDF_TARGET}'")
+endif()
+set(ENV{IDF_TARGET} "${BOARD_TARGET}")
 message(STATUS "Board: ${BOARD}")
 file(WRITE "${CMAKE_SOURCE_DIR}/board_config.cmake" "set(BOARD \"${BOARD}\")\n")
 
@@ -56,7 +65,7 @@ idf_build_get_property(build_dir BUILD_DIR)
 if(BOARD STREQUAL "tab5")
     set(IMAGE_PREFIX "SimplrRadio-Tab5")
 else()
-    set(IMAGE_PREFIX "SimplrRadio-Waveshare")
+    set(IMAGE_PREFIX "SimplrRadio-TDeck")
 endif()
 set(LAUNCHER_TABLE "${build_dir}/partition_table/partition-table-launcher.bin")
 set(LAUNCHER_APP_OFFSET 0x50000)   # The app's offset in partitions_launcher.csv

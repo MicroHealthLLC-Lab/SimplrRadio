@@ -32,7 +32,7 @@ def grep(pattern, exclude=()):
 
 BOARD_FILES = {
     "tab5": {"board_m5stack_tab5.c", "tab5_keyboard.c", "tab5_keymap.c"},
-    "waveshare": {"board_waveshare_p4_720.c"},
+    "tdeck": {"board_tdeck.c", "tdeck_keyboard.c", "tdeck_keymap.c"},
 }
 
 
@@ -45,9 +45,23 @@ class Build(unittest.TestCase):
     def test_board_sources_listed_per_board(self):
         cmake = repo.read("main", "CMakeLists.txt")
         tab5, rest = cmake.split('if(BOARD STREQUAL "tab5")', 1)[1].split("else()", 1)
-        waveshare = rest.split("endif()", 1)[0]
+        tdeck = rest.split("endif()", 1)[0]
         self.assertEqual(set(re.findall(r'"(\w+\.c)"', tab5)), BOARD_FILES["tab5"])
-        self.assertEqual(set(re.findall(r'"(\w+\.c)"', waveshare)), BOARD_FILES["waveshare"])
+        self.assertEqual(set(re.findall(r'"(\w+\.c)"', tdeck)), BOARD_FILES["tdeck"])
+
+    def test_only_the_two_boards(self):
+        cmake = repo.read("CMakeLists.txt")
+        self.assertIn('BOARD STREQUAL "tab5"', cmake)
+        self.assertIn('BOARD STREQUAL "tdeck"', cmake)
+        self.assertIn('set(BOARD_TARGET "esp32p4")', cmake)
+        self.assertIn('set(BOARD_TARGET "esp32s3")', cmake)
+        boards = sorted(os.path.basename(f) for f in glob.glob(os.path.join(repo.MAIN, "board_*.c")))
+        self.assertEqual(boards, ["board_m5stack_tab5.c", "board_tdeck.c"])
+        for board in ("tab5", "tdeck"):
+            for name in (f"sdkconfig.defaults.{board}", f"sdkconfig.{board}", f"dependencies.lock.{board}",
+                         f"main/idf_component.{board}.yml"):
+                with self.subTest(file=name):
+                    self.assertTrue(os.path.isfile(repo.path(*name.split("/"))))
 
     def test_ai_rules_code_layout_covers_every_source(self):
         layout = repo.read("AI_RULES.md").split("## Code layout", 1)[1].split("\n## ", 1)[0]
@@ -56,10 +70,11 @@ class Build(unittest.TestCase):
         self.assertEqual(sorted(present - documented), [], "add new source files to the Code layout table")
         self.assertEqual(sorted(documented - present), [], "Code layout lists files that no longer exist")
 
-    def test_c6_firmware_embedded_not_partitioned(self):
-        self.assertIn("slave_fw/network_adapter.bin", repo.read("main", "CMakeLists.txt"))
-        self.assertTrue(os.path.isfile(repo.path("slave_fw", "network_adapter.bin")))
-        self.assertNotIn("esp_partition_find", SRC["main/slave_ota.c"])
+    def test_no_firmware_updates(self):
+        # As SimplrSSH: nothing is ever flashed over a link, the C6 included (esp_hosted 3.x works
+        # with the firmware it ships with)
+        self.assertFalse(os.path.exists(repo.path("slave_fw")))
+        self.assertEqual(grep(r"esp_hosted_slave_ota|esp_ota_begin|esp_https_ota"), [])
 
 
 class Settings(unittest.TestCase):
@@ -203,7 +218,7 @@ class Boards(unittest.TestCase):
         for header in ("board.h", "audio.h"):
             functions |= set(re.findall(r"^\w[\w\s\*]*?\b(\w+)\s*\([^;]*\);", repo.read("main", header), re.M))
         self.assertIn("board_display_start", functions)
-        for board in ("board_m5stack_tab5.c", "board_waveshare_p4_720.c"):
+        for board in ("board_m5stack_tab5.c", "board_tdeck.c"):
             code = SRC[f"main/{board}"]
             for fn in sorted(functions):
                 with self.subTest(board=board, function=fn):
@@ -215,9 +230,34 @@ class Boards(unittest.TestCase):
         self.assertIn("IO_EXPANDER_OUTPUT_MODE_PUSH_PULL", tab5, "expander outputs must be push-pull")
         self.assertNotIn("st7123_lcd_init_cmd_t", tab5, "no fixed single-panel init sequence")
 
-    def test_tab5_c6_reset_pin(self):
+    def test_tab5_wifi_as_simplrssh(self):
+        # The C6 link as SimplrSSH's Tab5 firmware: esp_hosted started by the app once the C6 has
+        # power, never from a constructor before app_main
         tab5 = dict(re.findall(r"(?m)^(CONFIG_\w+)=(.*)$", repo.read("sdkconfig.defaults.tab5")))
-        self.assertEqual(tab5.get("CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE"), "15")
+        self.assertEqual(tab5.get("CONFIG_ESP_HOSTED_HOST_RESET_GPIO"), "15")
+        self.assertEqual(tab5.get("CONFIG_ESP32P4_TAB5_C6_BOARD"), "y")
+        self.assertEqual(tab5.get("CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN"), "n")
+        self.assertEqual(repo.sdkconfig("sdkconfig.tab5").get("CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN"), "n")
+        self.assertIn("esp_hosted_init()", SRC["main/board_m5stack_tab5.c"])
+        manifest = repo.read("main", "idf_component.tab5.yml")
+        self.assertIn("espressif/esp_hosted: '==3.0.9'", manifest)
+        self.assertIn("espressif/esp_wifi_remote: '==1.6.5'", manifest)
+
+    def test_shared_code_reaches_wifi_through_the_board(self):
+        self.assertEqual(grep(r"esp_hosted", exclude=("board_m5stack_tab5.c",)), [],
+                         "the C6 link belongs in the Tab5 board file (board_wifi_prepare)")
+        self.assertIn("board_wifi_prepare(", SRC["main/wifi_mgr.cpp"])
+
+    def test_tdeck_as_simplrssh(self):
+        tdeck = SRC["main/board_tdeck.c"]
+        self.assertIn("bsp_display_start_with_config", tdeck)
+        self.assertIn("esp_lcd_touch_new_i2c_gt911", tdeck)
+        self.assertIn("GPIO_NUM_10", tdeck, "the peripheral power pin")
+        defaults = dict(re.findall(r"(?m)^(CONFIG_\w+)=(.*)$", repo.read("sdkconfig.defaults.tdeck")))
+        self.assertEqual(defaults.get("CONFIG_IDF_TARGET"), '"esp32s3"')
+        self.assertEqual(defaults.get("CONFIG_BSP_DISPLAY_DRIVER_ST7789"), "y")
+        self.assertEqual(defaults.get("CONFIG_BSP_I2C_GPIO_SDA"), "18")
+        self.assertEqual(defaults.get("CONFIG_BSP_I2C_GPIO_SCL"), "8")
 
 
 class Ui(unittest.TestCase):
@@ -256,12 +296,14 @@ class Ui(unittest.TestCase):
         self.assertIn('"-u lv_malloc_core"', repo.read("main", "CMakeLists.txt"))
 
     def test_page_model_is_host_tested(self):
-        for name in ("main/ui_page.cpp", "main/ui_page.hpp", "main/text.c", "main/tab5_keymap.c"):
+        for name in ("main/ui_page.cpp", "main/ui_page.hpp", "main/text.c", "main/tab5_keymap.c",
+                     "main/tdeck_keymap.c"):
             with self.subTest(file=name):
                 self.assertNotRegex(SRC[name], r'#include\s*[<"](lvgl\.h|esp_|freertos/)',
                                     "keep host-tested code free of LVGL / ESP-IDF headers")
         host = repo.read("test", "host", "CMakeLists.txt")
-        for name in ("ui_page.cpp", "text.c", "tab5_keymap.c", "portal.cpp", "secret_vault.cpp", "settings.cpp"):
+        for name in ("ui_page.cpp", "text.c", "tab5_keymap.c", "tdeck_keymap.c", "portal.cpp", "secret_vault.cpp",
+                     "settings.cpp"):
             self.assertIn(f"${{MAIN_DIR}}/{name}", host)
 
     def test_network_text_cleaned_for_the_screen(self):
@@ -282,7 +324,7 @@ class Ui(unittest.TestCase):
 
 
 class SdkconfigDefaults(unittest.TestCase):
-    FILES = ("sdkconfig.defaults", "sdkconfig.defaults.tab5", "sdkconfig.defaults.waveshare")
+    FILES = ("sdkconfig.defaults", "sdkconfig.defaults.tab5", "sdkconfig.defaults.tdeck")
 
     def test_every_setting_explained(self):
         for name in self.FILES:
@@ -297,7 +339,7 @@ class SdkconfigDefaults(unittest.TestCase):
                     self.assertTrue(j >= 0 and lines[j].startswith("#"), f"comment each setting in {name}")
 
     def test_defaults_applied_to_committed_sdkconfig(self):
-        for board in ("tab5", "waveshare"):
+        for board in ("tab5", "tdeck"):
             committed = repo.sdkconfig(f"sdkconfig.{board}")
             wanted = {}
             for name in ("sdkconfig.defaults", f"sdkconfig.defaults.{board}"):
@@ -308,10 +350,10 @@ class SdkconfigDefaults(unittest.TestCase):
                 with self.subTest(board=board, option=option):
                     self.assertEqual(committed[option], value, f"sdkconfig.{board} is stale: rebuild and commit it")
 
-    def test_committed_sdkconfig_is_for_the_p4(self):
-        for board in ("tab5", "waveshare"):
+    def test_committed_sdkconfig_is_for_the_boards_chip(self):
+        for board, chip in (("tab5", '"esp32p4"'), ("tdeck", '"esp32s3"')):
             with self.subTest(board=board):
-                self.assertEqual(repo.sdkconfig(f"sdkconfig.{board}").get("CONFIG_IDF_TARGET"), '"esp32p4"')
+                self.assertEqual(repo.sdkconfig(f"sdkconfig.{board}").get("CONFIG_IDF_TARGET"), chip)
 
 
 if __name__ == "__main__":

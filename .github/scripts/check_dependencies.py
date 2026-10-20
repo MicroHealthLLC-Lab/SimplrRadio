@@ -3,7 +3,7 @@
 Lockfile check for the Tests workflow's install job (from SimplrSSH's). Run after
 `idf.py reconfigure` on a clean checkout in the pinned ESP-IDF image:
 
-  check_dependencies.py --board tab5|waveshare <reconfigure.log> <committed-lock> <committed-sdkconfig>
+  check_dependencies.py --board tab5|tdeck <reconfigure.log> <committed-lock> <committed-sdkconfig>
                         <generated-sdkconfig>
 
 (reconfigure rewrites the lock and sdkconfig, so pass copies taken before it ran). Each board
@@ -18,11 +18,12 @@ Fails (exit 1) when
   - a setting in the defaults does not take effect in the generated sdkconfig.
 
 ESP-IDF v5.5.1's component manager re-solves dependencies in a second, Kconfig-aware pass on a
-clean build directory (LVGL 9.6's manifest has Kconfig conditions) and can replace locked
-components with newer ones (SimplrSSH's LVGL 9.4.0 became 9.6.0~1). This project pins every
-component with == and LVGL at 9.6.0~1, so both passes agree: KNOWN_DRIFT stays empty, and any
-drift is a failure instead of a silent firmware change. (The second pass also rewrites the lock
-with local paths; scripts/update-lock.sh keeps the first pass's.)
+clean build directory (some manifests have Kconfig conditions). That pass lists requirements it
+does not install (SimplrSSH's Tab5 log shows "lvgl/lvgl (9.6.0~1)" beside the 9.4.0 in
+managed_components/, which is what compiles) and rewrites the lock with local paths
+(scripts/update-lock.sh keeps the first pass's). This project pins every component with ==,
+so the first pass installs exactly the lock and KNOWN_DRIFT stays empty: any drift in what
+managed_components/ holds is a failure instead of a silent firmware change.
 """
 
 import glob
@@ -34,7 +35,7 @@ import sys
 KNOWN_DRIFT = {}
 BOARDS = {
     "tab5": (KNOWN_DRIFT, ["sdkconfig.defaults", "sdkconfig.defaults.tab5"]),
-    "waveshare": (KNOWN_DRIFT, ["sdkconfig.defaults", "sdkconfig.defaults.waveshare"]),
+    "tdeck": (KNOWN_DRIFT, ["sdkconfig.defaults", "sdkconfig.defaults.tdeck"]),
 }
 
 

@@ -9,13 +9,13 @@ on:
     branches: [main, integration]
     paths:
       - 'dependencies.lock.tab5'
-      - 'dependencies.lock.waveshare'
+      - 'dependencies.lock.tdeck'
       - 'main/idf_component.*.yml'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
       - 'dependencies.lock.tab5'
-      - 'dependencies.lock.waveshare'
+      - 'dependencies.lock.tdeck'
       - 'main/idf_component.*.yml'
   workflow_dispatch:
 

@@ -5,7 +5,7 @@
 #
 # 2026-10-20: carried over from SimplrSSH, which builds with the same ESP-IDF v5.5.1 and
 # its bundled mbedTLS 3.6.4. The fix is moving to a newer ESP-IDF release, which changes the
-# whole firmware and must be tested on a Tab5 and a Waveshare board. Not yet assessed for
+# whole firmware and must be tested on a Tab5 and a T-Deck. Not yet assessed for
 # reachability here (TLS client only: the station directory, streams and sign-in pages).
 CVE-2026-34877 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
 CVE-2026-34875 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)

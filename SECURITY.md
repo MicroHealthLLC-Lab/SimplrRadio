@@ -14,15 +14,15 @@ and how to reproduce it.
   with ESP-IDF's CA bundle), the radio streams it lists (HTTP or HTTPS, audio only), the
   captive-portal probe `http://connectivitycheck.gstatic.com/generate_204` and the sign-in
   pages a network serves.
-- **No firmware updates over the network.** The only update is the ESP32-C6 WiFi chip's, from
-  the image inside the radio's own firmware.
+- **No firmware updates of any kind.** Nothing is flashed over the network, and the Tab5's
+  ESP32-C6 WiFi chip keeps the firmware it shipped with.
 
 ## Secrets
 
 - No credentials or keys are compiled in; CI scans every image for key material.
 - **WiFi passwords** are stored encrypted with AES-256-GCM (`main/secret_vault.cpp`). The data
   key is wrapped under a random per-device secret; each record is bound to its network by
-  authenticated data. The WiFi chip is told to keep no copy (`WIFI_STORAGE_RAM`), and
+  authenticated data. The WiFi driver is told to keep no copy (`WIFI_STORAGE_RAM`), and
   passwords typed on screen are wiped from memory after use.
 - A secured network is only joined with WPA2 or better (an impostor offering WEP, WPA or an
   open network under the same name is refused); management frames are protected when the

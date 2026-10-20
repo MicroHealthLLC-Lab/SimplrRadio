@@ -8,10 +8,9 @@
  */
 
 #include "wifi_mgr.hpp"
+#include "board.h"
 #include "secret_vault.hpp"
 #include "settings_nvs.hpp"
-#include "slave_ota.h"
-#include "esp_hosted.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -267,16 +266,6 @@ static void on_event(void* arg, esp_event_base_t base, int32_t id, void* data)
     }
 }
 
-static wifi::progress_cb_t s_progress;   // Only while start() runs
-
-static void ota_progress(int percent)
-{
-    if (s_progress) {
-        char text[64];
-        snprintf(text, sizeof(text), "Updating the WiFi chip (first start only): %d%%", percent);
-        s_progress(text);
-    }
-}
 
 esp_err_t wifi::start(progress_cb_t progress)
 {
@@ -289,16 +278,13 @@ esp_err_t wifi::start(progress_cb_t progress)
     if (progress) {
         progress("Starting WiFi...");
     }
-    // esp_hosted set up its SDIO transport before app_main; the C6 is powered by now
-    if (esp_hosted_connect_to_slave() != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi co-processor not responding");
-        return ESP_FAIL;
+    // Tab5: the link to the WiFi co-processor; T-Deck: nothing
+    esp_err_t err = board_wifi_prepare();
+    if (err != ESP_OK) {
+        return err;
     }
-    s_progress = progress;
-    slave_ota_update_if_needed(ota_progress);
-    s_progress = NULL;
 
-    esp_err_t err = esp_netif_init();
+    err = esp_netif_init();
     if (err == ESP_OK) {
         err = esp_event_loop_create_default();
         if (err == ESP_ERR_INVALID_STATE) {
@@ -317,8 +303,8 @@ esp_err_t wifi::start(progress_cb_t progress)
         ESP_LOGE(TAG, "WiFi init failed: %s", esp_err_to_name(err));
         return err;
     }
-    // Networks are saved by the radio (passwords in the vault): the co-processor must not keep
-    // its own plain-text copy in its flash
+    // Networks are saved by the radio (passwords in the vault): the driver (on the Tab5, the
+    // co-processor) must not keep its own plain-text copy in flash
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
     static bool handlers;   // Once, even if "Try again" runs start() after a failed start
     if (!handlers) {

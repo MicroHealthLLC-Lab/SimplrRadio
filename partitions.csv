@@ -1,7 +1,7 @@
 # Partition table for the image flashed at 0x0 (idf.py flash / SimplrRadio-*-release.bin).
 # Settings (nvs: WiFi networks, encrypted passwords, station search, volume) sit AFTER the app,
 # so flashing a release image at 0x0 (bootloader + partition table + app) never erases them.
-# The ESP32-C6 WiFi firmware is embedded in the app (slave_ota.c): no separate partition.
+# The same table on both boards (16 MB flash). No firmware is carried for the Tab5's ESP32-C6.
 # Name,   Type, SubType, Offset,   Size,    Flags
 factory,  app,  factory, 0x10000,  6M,
 nvs,      data, nvs,     0x610000, 0x40000,
