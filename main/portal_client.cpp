@@ -24,7 +24,7 @@ const char* const PROBE_URL = "http://connectivitycheck.gstatic.com/generate_204
 static const int MAX_HOPS = 8;
 static const int TIMEOUT_MS = 10000;
 static const size_t MAX_SET_COOKIES = 20;   // Per response
-static const char* USER_AGENT = "Mozilla/5.0 (Linux; WebRadio) AppleWebKit/537.36 (KHTML, like Gecko)";
+static const char* USER_AGENT = "Mozilla/5.0 (Linux; SimplrRadio) AppleWebKit/537.36 (KHTML, like Gecko)";
 
 // Response headers the client needs, collected by the event handler
 struct Capture {

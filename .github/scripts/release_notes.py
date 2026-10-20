@@ -37,7 +37,7 @@ def board_section(title, image, sha256, launcher_image, launcher_sha256, downloa
 
 **With a launcher (Bmorcelli Launcher / M5 Launcher):** copy **`{launcher_image}`** to the SD
 card and install it from the launcher's SD menu (or its web installer). The launcher puts the
-app in a free slot and creates the radio's own `webradio` settings partition, which it keeps
+app in a free slot and creates the radio's own `simplrradio` settings partition, which it keeps
 when you install a newer version the same way. Nothing is written at `0x0`.
 
 SHA-256: `{launcher_sha256}` (also in `{launcher_image}.sha256`)
@@ -61,7 +61,7 @@ def build_notes(readme, version, tab5, waveshare):
     if changes:
         whats_new = f"## What's new in {title}\n\n{changes}\n"
     else:
-        whats_new = (f"## Web Radio v{version}\n\n"
+        whats_new = (f"## SimplrRadio v{version}\n\n"
                      "The changes in this release are listed under *What's Changed* below.\n")
     notes = whats_new + """
 Setup happens on the radio's screen: pick your WiFi network (touch or the Tab5 Keyboard),

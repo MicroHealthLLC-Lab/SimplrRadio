@@ -1,7 +1,7 @@
 /*
  * Settings NVS Implementation
  * Picks the partition that holds the saved settings (see settings_nvs.hpp):
- *   "webradio" (any data subtype)   installed by a launcher from the -launcher.bin image;
+ *   "simplrradio" (any data subtype) installed by a launcher from the -launcher.bin image;
  *                                   ours, so reformatted if unreadable
  *   "nvs", app in "factory"         flashed directly at 0x0; ours, reformatted if unreadable
  *   "nvs", app elsewhere (ota_N)    a launcher's own settings; used as-is, never erased
@@ -15,7 +15,7 @@
 
 static const char *TAG = "settings";
 
-static const char* const OWN_LABEL = "webradio";
+static const char* const OWN_LABEL = "simplrradio";
 static const size_t MIN_SIZE = 0x4000;   // NVS needs a few 4 KB pages to be useful
 static const char* active_label = NVS_DEFAULT_PART_NAME;
 
@@ -65,7 +65,7 @@ settings_nvs::InitResult settings_nvs::init()
         return init_own(nvs);
     }
 
-    // Installed by a launcher from an image without the "webradio" partition
+    // Installed by a launcher from an image without the "simplrradio" partition
     ESP_LOGW(TAG, "Using the launcher's nvs partition");
     esp_err_t err = nvs_flash_init_partition_ptr(nvs);
     if (err != ESP_OK) {

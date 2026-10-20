@@ -11,7 +11,7 @@ import repo
 FLASH = 16 * 1024 * 1024
 NVS_OFFSET = 0x610000          # Fixed forever: moving it wipes every user's settings
 SETTINGS_SIZE = 0x40000        # 256 KB, never shrink
-OWN_LABEL = "webradio"         # The launcher's settings partition; launchers keep it by name
+OWN_LABEL = "simplrradio"         # The launcher's settings partition; launchers keep it by name
 
 
 def by_name(rows):

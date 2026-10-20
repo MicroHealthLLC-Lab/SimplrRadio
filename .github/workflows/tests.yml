@@ -227,10 +227,10 @@ jobs:
                 export BOARD=$board
                 B="-B build-$board"
                 idf.py $B build 2>&1 | tee "build-output-$board.log"
-                idf.py $B merge-bin -o "WebRadio-$board-ci-release.bin"
+                idf.py $B merge-bin -o "SimplrRadio-$board-ci-release.bin"
                 idf.py $B launcher-bin
-                python -m esp_idf_size --format json -o "build-$board/size.json" "build-$board/WebRadio.map"
-                riscv32-esp-elf-nm --defined-only "build-$board/WebRadio.elf" > "build-$board/symbols.txt"
+                python -m esp_idf_size --format json -o "build-$board/size.json" "build-$board/SimplrRadio.map"
+                riscv32-esp-elf-nm --defined-only "build-$board/SimplrRadio.elf" > "build-$board/symbols.txt"
                 esp-idf-sbom create "build-$board/project_description.json" -o "build-$board/sbom.spdx"
               done'
       - name: Static internal RAM budget
@@ -243,13 +243,13 @@ jobs:
           python3 .github/scripts/check_firmware.py warnings build-output-waveshare.log
       - name: No key material in the images
         run: |
-          images=$(ls build-*/WebRadio.bin build-*/bootloader/bootloader.bin build-*/WebRadio-*-ci-release.bin \
-                      build-*/WebRadio-*-launcher.bin)
+          images=$(ls build-*/SimplrRadio.bin build-*/bootloader/bootloader.bin build-*/SimplrRadio-*-ci-release.bin \
+                      build-*/SimplrRadio-*-launcher.bin)
           # shellcheck disable=SC2086
           python3 .github/scripts/check_firmware.py secrets $images
           # Negative control: the same scan must catch a real key appended to the image
           ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/control_key"
-          cat build-tab5/WebRadio.bin "$RUNNER_TEMP/control_key" > "$RUNNER_TEMP/control.bin"
+          cat build-tab5/SimplrRadio.bin "$RUNNER_TEMP/control_key" > "$RUNNER_TEMP/control.bin"
           if python3 .github/scripts/check_firmware.py secrets "$RUNNER_TEMP/control.bin" > /dev/null; then
             echo "::error::Negative control failed: the key-material scan did not catch a planted key"
             exit 1

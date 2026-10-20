@@ -1,11 +1,11 @@
-# Partition table of WebRadio-*-launcher.bin, the image for launchers such as bmorcelli/Launcher
+# Partition table of SimplrRadio-*-launcher.bin, the image for launchers such as bmorcelli/Launcher
 # (M5 Launcher). Build: `idf.py launcher-bin`. The direct-flash layout is partitions.csv.
 # A launcher keeps its own bootloader, partition table and "nvs"; from this table it installs the
-# app into a free slot and creates the "webradio" data partition, which it keeps across updates.
+# app into a free slot and creates the "simplrradio" data partition, which it keeps across updates.
 # The radio stores all its settings there as NVS (main/settings_nvs.cpp). Launchers only create
-# SPIFFS/LittleFS/FAT data partitions, hence the spiffs subtype. "webradio" comes before the app
+# SPIFFS/LittleFS/FAT data partitions, hence the spiffs subtype. "simplrradio" comes before the app
 # so the image contains it (erased, 0xFF): the launcher's web installer skips partitions past the
 # end of the file. The app offset must match LAUNCHER_APP_OFFSET in CMakeLists.txt.
-# Name,   Type, SubType, Offset,   Size,    Flags
-webradio, data, spiffs,  0x10000,  0x40000,
-factory,  app,  factory, 0x50000,  6M,
+# Name,      Type, SubType, Offset,   Size,    Flags
+simplrradio, data, spiffs,  0x10000,  0x40000,
+factory,     app,  factory, 0x50000,  6M,

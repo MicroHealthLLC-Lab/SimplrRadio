@@ -6,11 +6,13 @@ link to this file and `AGENTS.md` points here: this is the one rules file. The g
 
 ## What it is
 
-ESP32-P4 internet radio for the **M5Stack Tab5** (every panel revision, with or without the
+SimplrRadio: an ESP32-P4 internet radio for the **M5Stack Tab5** (every panel revision, with or without the
 Tab5 Keyboard) and the **Waveshare ESP32-P4-WIFI6-Touch-LCD-4B**. It streams MP3 stations from
 the Radio Browser directory, shows the station, the song and a live spectrum, and is set up
 entirely on its own screen: WiFi networks (scan, saved profiles, hidden networks, sign-in
-pages of cafes and hotels) and the station search. It follows SimplrSSH's patterns
+pages of cafes and hotels) and the station search. It is a fork of David M. King's
+esp32-p4-webradio (github.com/dmatking/esp32-p4-webradio, MIT; credit him in the README and
+keep his copyright notices) and follows SimplrSSH's patterns
 (github.com/MicroHealthLLC/SimplrSSH): the page UI, the encrypted vault, the settings
 partition, the Tab5 bring-up, the launcher image and the CI pipelines.
 
@@ -85,7 +87,7 @@ names. Fonts and sizes come from `board_ui()`.
 
 - Settings are NVS in the settings partition (`settings_nvs::open()` only): `"nvs"` **after
   the app** at `0x610000` (256 KB) when flashed at `0x0`, so a release image never erases it;
-  the `"webradio"` partition when installed by a launcher (Bmorcelli Launcher / M5 Launcher),
+  the `"simplrradio"` partition when installed by a launcher (Bmorcelli Launcher / M5 Launcher),
   which keeps it across updates. Never move or shrink them, never erase a launcher's `"nvs"`.
 - Namespaces: `radio` (search, volume, last station), `wifi` (saved networks), `vault`,
   `vault_dev` (the device secret).

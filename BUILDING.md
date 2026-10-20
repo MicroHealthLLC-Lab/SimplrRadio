@@ -35,12 +35,12 @@ app: `idf.py flash` brings it along, and the first start updates the C6 if neede
 ## Release images
 
 ```bash
-BOARD=tab5 idf.py -B build-tab5 merge-bin -o WebRadio-Tab5-v<ver>-release.bin   # flash at 0x0
-BOARD=tab5 idf.py -B build-tab5 launcher-bin   # build-tab5/WebRadio-Tab5-v<ver>-launcher.bin
+BOARD=tab5 idf.py -B build-tab5 merge-bin -o SimplrRadio-Tab5-v<ver>-release.bin   # flash at 0x0
+BOARD=tab5 idf.py -B build-tab5 launcher-bin   # build-tab5/SimplrRadio-Tab5-v<ver>-launcher.bin
 ```
 
 The launcher image uses `partitions_launcher.csv`: the app at `0x50000` and, before it, the
-`webradio` settings partition (SPIFFS subtype, which launchers create and keep). The version
+`simplrradio` settings partition (SPIFFS subtype, which launchers create and keep). The version
 comes from `FIRMWARE_VERSION` (CI) or `PROJECT_VER` in `CMakeLists.txt`.
 
 ## Partitions and settings
@@ -48,7 +48,7 @@ comes from `FIRMWARE_VERSION` (CI) or `PROJECT_VER` in `CMakeLists.txt`.
 | Image | Settings | Where |
 |---|---|---|
 | Flashed at `0x0` (`partitions.csv`) | `nvs`, 256 KB at `0x610000` | after the 6 MB app, so re-flashing never erases it |
-| Launcher (`partitions_launcher.csv`) | `webradio`, 256 KB | the launcher keeps it across updates |
+| Launcher (`partitions_launcher.csv`) | `simplrradio`, 256 KB | the launcher keeps it across updates |
 
 `main/settings_nvs.cpp` picks the partition at boot. To forget every network and setting on a
 directly flashed radio: `esptool.py --chip esp32p4 erase_region 0x610000 0x40000`.

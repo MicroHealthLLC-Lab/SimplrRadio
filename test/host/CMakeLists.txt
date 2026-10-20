@@ -9,7 +9,7 @@
 # Two suites, run by separate CI jobs: "unit" and "persistence" (settings partition choice,
 # the vault and the radio's settings across reboots).
 cmake_minimum_required(VERSION 3.16)
-project(webradio_host_tests C CXX)
+project(simplrradio_host_tests C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)

@@ -1,11 +1,11 @@
 # Builds the firmware for both boards from the same sources and packages each as two images
 # (the same pipeline as SimplrSSH's):
 #   M5Stack Tab5 (ESP32-P4):
-#   - WebRadio-Tab5-v<version>-release.bin, to flash at offset 0x0 (16 MB)
-#   - WebRadio-Tab5-v<version>-launcher.bin, to install with a launcher such as
+#   - SimplrRadio-Tab5-v<version>-release.bin, to flash at offset 0x0 (16 MB)
+#   - SimplrRadio-Tab5-v<version>-launcher.bin, to install with a launcher such as
 #     bmorcelli/Launcher (M5 Launcher): same app, partitions_launcher.csv with the settings partition
 #   Waveshare ESP32-P4-WIFI6-Touch-LCD-4B:
-#   - WebRadio-Waveshare-v<version>-release.bin (0x0) and WebRadio-Waveshare-v<version>-launcher.bin
+#   - SimplrRadio-Waveshare-v<version>-release.bin (0x0) and SimplrRadio-Waveshare-v<version>-launcher.bin
 #
 # Versions and releases (see .github/scripts/plan_release.py):
 #   - Every push to main publishes a release, auto-incrementing the patch number from
@@ -97,11 +97,11 @@ jobs:
           command: >-
             set -o pipefail &&
             idf.py -B build-tab5 build 2>&1 | tee build-output-tab5.log &&
-            idf.py -B build-tab5 merge-bin -o WebRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin &&
+            idf.py -B build-tab5 merge-bin -o SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin &&
             idf.py -B build-tab5 launcher-bin &&
             cd build-tab5 &&
-            sha256sum WebRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin > WebRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
-            sha256sum WebRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin > WebRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
+            sha256sum SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin > SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
+            sha256sum SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin > SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
 
       # The Waveshare from an empty managed_components/ (the boards' components differ), into
       # build-waveshare/
@@ -116,19 +116,19 @@ jobs:
             set -o pipefail &&
             rm -rf managed_components &&
             idf.py -B build-waveshare build 2>&1 | tee build-output-waveshare.log &&
-            idf.py -B build-waveshare merge-bin -o WebRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin &&
+            idf.py -B build-waveshare merge-bin -o SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin &&
             idf.py -B build-waveshare launcher-bin &&
             cd build-waveshare &&
-            sha256sum WebRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin > WebRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
-            sha256sum WebRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin > WebRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
+            sha256sum SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin > SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
+            sha256sum SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin > SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
 
       - name: Collect images
         env:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
           mkdir -p dist
-          cp build-tab5/WebRadio-Tab5-v"$VERSION"-*.bin build-tab5/WebRadio-Tab5-v"$VERSION"-*.bin.sha256 dist/
-          cp build-waveshare/WebRadio-Waveshare-v"$VERSION"-*.bin build-waveshare/WebRadio-Waveshare-v"$VERSION"-*.bin.sha256 dist/
+          cp build-tab5/SimplrRadio-Tab5-v"$VERSION"-*.bin build-tab5/SimplrRadio-Tab5-v"$VERSION"-*.bin.sha256 dist/
+          cp build-waveshare/SimplrRadio-Waveshare-v"$VERSION"-*.bin build-waveshare/SimplrRadio-Waveshare-v"$VERSION"-*.bin.sha256 dist/
           ls -la dist
 
       - name: Summarize
@@ -138,7 +138,7 @@ jobs:
           PRERELEASE: ${{ steps.plan.outputs.prerelease }}
         run: |
           {
-            echo "## Web Radio v$VERSION"
+            echo "## SimplrRadio v$VERSION"
             echo ""
             echo "| File | Size | Install | SHA-256 |"
             echo "|---|---|---|---|"
@@ -168,11 +168,11 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: WebRadio-v${{ steps.plan.outputs.version }}
+          name: SimplrRadio-v${{ steps.plan.outputs.version }}
           path: |
             dist/*.bin
             dist/*.bin.sha256
-            build-tab5/WebRadio.bin
+            build-tab5/SimplrRadio.bin
             build-tab5/bootloader/bootloader.bin
             build-tab5/partition_table/partition-table.bin
             build-tab5/partition_table/partition-table-launcher.bin
@@ -214,10 +214,10 @@ jobs:
     env:
       VERSION: ${{ needs.build.outputs.version }}
       TAG: ${{ needs.build.outputs.tag }}
-      TAB5_IMAGE: WebRadio-Tab5-v${{ needs.build.outputs.version }}-release.bin
-      TAB5_LAUNCHER_IMAGE: WebRadio-Tab5-v${{ needs.build.outputs.version }}-launcher.bin
-      WAVESHARE_IMAGE: WebRadio-Waveshare-v${{ needs.build.outputs.version }}-release.bin
-      WAVESHARE_LAUNCHER_IMAGE: WebRadio-Waveshare-v${{ needs.build.outputs.version }}-launcher.bin
+      TAB5_IMAGE: SimplrRadio-Tab5-v${{ needs.build.outputs.version }}-release.bin
+      TAB5_LAUNCHER_IMAGE: SimplrRadio-Tab5-v${{ needs.build.outputs.version }}-launcher.bin
+      WAVESHARE_IMAGE: SimplrRadio-Waveshare-v${{ needs.build.outputs.version }}-release.bin
+      WAVESHARE_LAUNCHER_IMAGE: SimplrRadio-Waveshare-v${{ needs.build.outputs.version }}-launcher.bin
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -238,7 +238,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: WebRadio-v${{ needs.build.outputs.version }}
+          name: SimplrRadio-v${{ needs.build.outputs.version }}
           path: firmware
 
       - name: Write release notes
@@ -254,7 +254,7 @@ jobs:
         with:
           tag_name: ${{ needs.build.outputs.tag }}
           target_commitish: ${{ needs.build.outputs.sha }}
-          name: Web Radio ${{ needs.build.outputs.tag }}
+          name: SimplrRadio ${{ needs.build.outputs.tag }}
           body_path: release-notes.md
           generate_release_notes: true
           prerelease: ${{ needs.build.outputs.prerelease == 'true' }}

@@ -41,22 +41,22 @@ set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;sdkconfig.defaults.${BOARD}")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Each board's resolved components are locked (and committed) separately
 idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_CURRENT_LIST_DIR}/dependencies.lock.${BOARD}")
-project(WebRadio)
+project(SimplrRadio)
 
 # Release images, after `idf.py build`:
-#   idf.py merge-bin -o WebRadio-<Board>-v<ver>-release.bin   bootloader, partition table and
+#   idf.py merge-bin -o SimplrRadio-<Board>-v<ver>-release.bin   bootloader, partition table and
 #                        app in one file, flashed at 0x0 (web flasher or esptool)
-#   idf.py launcher-bin  <build>/WebRadio-<Board>-v<ver>-launcher.bin: for launchers such as
+#   idf.py launcher-bin  <build>/SimplrRadio-<Board>-v<ver>-launcher.bin: for launchers such as
 #                        bmorcelli/Launcher (M5 Launcher), which install the app into their own
-#                        partition table; partitions_launcher.csv adds the "webradio" settings
+#                        partition table; partitions_launcher.csv adds the "simplrradio" settings
 #                        partition the launcher creates and keeps across updates
 idf_build_get_property(python PYTHON)
 idf_build_get_property(idf_path IDF_PATH)
 idf_build_get_property(build_dir BUILD_DIR)
 if(BOARD STREQUAL "tab5")
-    set(IMAGE_PREFIX "WebRadio-Tab5")
+    set(IMAGE_PREFIX "SimplrRadio-Tab5")
 else()
-    set(IMAGE_PREFIX "WebRadio-Waveshare")
+    set(IMAGE_PREFIX "SimplrRadio-Waveshare")
 endif()
 set(LAUNCHER_TABLE "${build_dir}/partition_table/partition-table-launcher.bin")
 set(LAUNCHER_APP_OFFSET 0x50000)   # The app's offset in partitions_launcher.csv

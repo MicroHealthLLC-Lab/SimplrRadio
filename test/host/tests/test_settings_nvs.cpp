@@ -38,10 +38,10 @@ TEST(nvs_factory_image_other_error_not_erased)
 TEST(nvs_launcher_partition_preferred)
 {
     fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, 0x5000, "nvs");
-    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x40000, "webradio");
+    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x40000, "simplrradio");
     fake::set_running(ESP_PARTITION_SUBTYPE_APP_OTA_0);
     CHECK(settings_nvs::init() == InitResult::OK);
-    CHECK_EQ(std::string(settings_nvs::partition()), std::string("webradio"));
+    CHECK_EQ(std::string(settings_nvs::partition()), std::string("simplrradio"));
     CHECK_EQ(fake::erase_count("nvs"), 0);
 }
 
@@ -49,18 +49,18 @@ TEST(nvs_launcher_partition_with_foreign_data_reformatted)
 {
     // A launcher formats the partition it creates as SPIFFS/FAT: not NVS yet, so it is ours to format
     fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, 0x5000, "nvs");
-    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x40000, "webradio");
+    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x40000, "simplrradio");
     fake::set_running(ESP_PARTITION_SUBTYPE_APP_OTA_0);
-    fake::set_init_result("webradio", ESP_FAIL);
+    fake::set_init_result("simplrradio", ESP_FAIL);
     CHECK(settings_nvs::init() == InitResult::REFORMATTED);
-    CHECK_EQ(fake::erase_count("webradio"), 1);
+    CHECK_EQ(fake::erase_count("simplrradio"), 1);
     CHECK_EQ(fake::erase_count("nvs"), 0);
 }
 
 TEST(nvs_tiny_own_partition_ignored)
 {
     fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, 0x40000, "nvs");
-    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x1000, "webradio");
+    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x1000, "simplrradio");
     fake::set_running(ESP_PARTITION_SUBTYPE_APP_FACTORY);
     CHECK(settings_nvs::init() == InitResult::OK);
     CHECK_EQ(std::string(settings_nvs::partition()), std::string("nvs"));
@@ -92,7 +92,7 @@ TEST(nvs_missing_partition_unavailable)
 TEST(nvs_open_uses_active_partition)
 {
     fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, 0x5000, "nvs");
-    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x40000, "webradio");
+    fake::add_partition(DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, 0x40000, "simplrradio");
     fake::set_running(ESP_PARTITION_SUBTYPE_APP_OTA_0);
     fake::init_partition("nvs");
     CHECK(settings_nvs::init() == InitResult::OK);
@@ -100,6 +100,6 @@ TEST(nvs_open_uses_active_partition)
     CHECK_EQ(settings_nvs::open("radio", NVS_READWRITE, &h), ESP_OK);
     CHECK_EQ(nvs_set_u32(h, "count", 1), ESP_OK);
     nvs_close(h);
-    CHECK_EQ(fake::store()["webradio"]["radio"].size(), (size_t)1);
+    CHECK_EQ(fake::store()["simplrradio"]["radio"].size(), (size_t)1);
     CHECK_EQ(fake::store()["nvs"].count("radio"), (size_t)0);
 }

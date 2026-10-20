@@ -1,4 +1,4 @@
-# Partition table for the image flashed at 0x0 (idf.py flash / WebRadio-*-release.bin).
+# Partition table for the image flashed at 0x0 (idf.py flash / SimplrRadio-*-release.bin).
 # Settings (nvs: WiFi networks, encrypted passwords, station search, volume) sit AFTER the app,
 # so flashing a release image at 0x0 (bootloader + partition table + app) never erases them.
 # The ESP32-C6 WiFi firmware is embedded in the app (slave_ota.c): no separate partition.

@@ -1,5 +1,5 @@
 /*
- * Web Radio app: boot, screens and input.
+ * SimplrRadio app: boot, screens and input.
  *
  * Tasks
  *   app task (app_main)  owns every screen and the player. Waits on one event queue (keys,
@@ -316,7 +316,7 @@ static void build_page(ui::Page& p)
     p = ui::Page();
     switch (s_screen) {
         case Screen::Boot:
-            p.title = "Web Radio";
+            p.title = "SimplrRadio";
             p.info = s_boot_status;
             p.busy = !s_boot_failed;
             if (s_boot_failed) {
@@ -513,7 +513,7 @@ static void build_page(ui::Page& p)
         case Screen::About: {
             const esp_app_desc_t* app = esp_app_get_description();
             p.title = "About";
-            p.info = std::string("Web Radio ") + app->version + " on " + board_name() + "\n";
+            p.info = std::string("SimplrRadio ") + app->version + " on " + board_name() + "\n";
             if (s_link_up) {
                 p.info += "WiFi: " + shown(wifi::ssid()) + " (" + ui::signal_words(wifi::rssi()) + "), IP " +
                           wifi::ip() + "\n";
@@ -554,7 +554,7 @@ static void render()
     }
     if (s_screen == Screen::NowPlaying) {
         s_ui.show_now_playing();
-        s_ui.set_title(s_link_up ? "Web Radio" : "Web Radio - offline");
+        s_ui.set_title(s_link_up ? "SimplrRadio" : "SimplrRadio - offline");
         refresh_now_playing();
         return;
     }
@@ -1763,7 +1763,7 @@ static void housekeeping()
 
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "Web Radio %s on %s", esp_app_get_description()->version, board_name());
+    ESP_LOGI(TAG, "SimplrRadio %s on %s", esp_app_get_description()->version, board_name());
     board_init_power();
 
     settings_nvs::InitResult nvs = settings_nvs::init();

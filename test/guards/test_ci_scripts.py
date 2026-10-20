@@ -96,12 +96,12 @@ class ReleaseNotes(unittest.TestCase):
 
     def test_notes_cover_both_boards(self):
         notes = release_notes.build_notes("# X\n", "2.0.1",
-                                          ("WebRadio-Tab5-v2.0.1-release.bin", "a" * 64,
-                                           "WebRadio-Tab5-v2.0.1-launcher.bin", "b" * 64),
-                                          ("WebRadio-Waveshare-v2.0.1-release.bin", "c" * 64,
-                                           "WebRadio-Waveshare-v2.0.1-launcher.bin", "d" * 64))
-        for text in ("WebRadio-Tab5-v2.0.1-release.bin", "WebRadio-Tab5-v2.0.1-launcher.bin", "--chip esp32p4",
-                     "WebRadio-Waveshare-v2.0.1-release.bin", "WebRadio-Waveshare-v2.0.1-launcher.bin",
+                                          ("SimplrRadio-Tab5-v2.0.1-release.bin", "a" * 64,
+                                           "SimplrRadio-Tab5-v2.0.1-launcher.bin", "b" * 64),
+                                          ("SimplrRadio-Waveshare-v2.0.1-release.bin", "c" * 64,
+                                           "SimplrRadio-Waveshare-v2.0.1-launcher.bin", "d" * 64))
+        for text in ("SimplrRadio-Tab5-v2.0.1-release.bin", "SimplrRadio-Tab5-v2.0.1-launcher.bin", "--chip esp32p4",
+                     "SimplrRadio-Waveshare-v2.0.1-release.bin", "SimplrRadio-Waveshare-v2.0.1-launcher.bin",
                      "Bmorcelli Launcher", "a" * 64, "b" * 64, "c" * 64, "d" * 64):
             self.assertIn(text, notes)
 
