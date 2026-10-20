@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 static const char *TAG = "wifi";
 
@@ -36,6 +37,7 @@ enum class State { Idle, Connecting, Connected };
 static EventGroupHandle_t s_events;
 static esp_netif_t* s_netif;
 static volatile bool s_started;
+static volatile bool s_power_save;           // Modem sleep (only while Bluetooth runs)
 static volatile State s_state = State::Idle;
 static volatile int s_retries;
 static volatile uint8_t s_last_reason;
@@ -268,6 +270,25 @@ static void on_event(void* arg, esp_event_base_t base, int32_t id, void* data)
 }
 
 
+// No modem sleep. The ESP32-S3's own WiFi (T-Deck) starts in WIFI_PS_MIN_MODEM, which sleeps
+// the radio between beacons: a long-lived stream starves, drops and is skipped, and the
+// handshake of a join can time out. The radio is always streaming, so it stays awake (on the
+// Tab5 the request goes to the C6). While Bluetooth runs, coexistence needs modem sleep.
+static void apply_power_save()
+{
+    if (esp_wifi_set_ps(s_power_save ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE) != ESP_OK) {
+        ESP_LOGW(TAG, "WiFi power save mode not changed");
+    }
+}
+
+void wifi::set_power_save(bool on)
+{
+    s_power_save = on;
+    if (s_started) {
+        apply_power_save();
+    }
+}
+
 esp_err_t wifi::start(progress_cb_t progress)
 {
     if (s_started) {
@@ -322,6 +343,7 @@ esp_err_t wifi::start(progress_cb_t progress)
         return err;
     }
     s_started = true;
+    apply_power_save();
     return ESP_OK;
 }
 
@@ -464,6 +486,9 @@ esp_err_t wifi::connect(const std::string& ssid, const std::string& password, st
     s_state = State::Idle;
     esp_wifi_disconnect();
     error = (bits & BIT_FAILED) ? reason_text(s_last_reason) : "No answer from the network (timed out).";
+    if (s_last_reason) {
+        error += " (reason " + std::to_string((unsigned)s_last_reason) + ")";   // For a report
+    }
     ESP_LOGW(TAG, "Connect failed (reason %u)", (unsigned)s_last_reason);
     return ESP_FAIL;
 }

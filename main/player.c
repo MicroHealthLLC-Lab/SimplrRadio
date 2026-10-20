@@ -29,6 +29,7 @@ static int s_index = -1;
 static int s_pending = -1;            // Debounced tune, -1 = none
 static TickType_t s_pending_tick;
 static bool s_wanted;                 // A stream should be playing
+static bool s_paused;                 // The user paused (survives WiFi drops and list reloads)
 static int s_retries;
 static TickType_t s_dead_since;       // 0 = alive
 static player_status_t s_status = PLAYER_IDLE;
@@ -140,10 +141,12 @@ void player_set_stations(const radio_station_t *list, int count)
             break;
         }
     }
-    s_status = PLAYER_IDLE;
+    s_status = s_paused ? PLAYER_PAUSED : PLAYER_IDLE;
     s_wanted = false;
     changed();
-    if (start >= 0) {
+    if (start >= 0 && s_paused) {
+        s_index = start;   // Shown, and played on Play
+    } else if (start >= 0) {
         s_retries = 0;
         commit(start);
     }
@@ -162,6 +165,7 @@ void player_select(int index)
     if (index < 0 || index >= s_count) {
         return;
     }
+    s_paused = false;           // Picking a station plays it
     s_index = index;            // The screen shows the choice at once
     s_pending = index;
     s_pending_tick = xTaskGetTickCount();
@@ -185,18 +189,47 @@ void player_stop(void)
     if (s_wanted) {
         halt();
         s_wanted = false;
-        s_status = PLAYER_IDLE;
+        s_status = s_paused ? PLAYER_PAUSED : PLAYER_IDLE;
         changed();
     }
 }
 
 void player_resume(void)
 {
-    if (s_index >= 0 && s_pending < 0) {
+    if (s_index >= 0 && s_pending < 0 && !s_paused) {
         s_retries = 0;
         commit(s_index);
     }
 }
+
+void player_pause(void)
+{
+    if (s_paused || s_index < 0) {
+        return;
+    }
+    s_pending = -1;
+    if (s_wanted) {
+        halt();
+        s_wanted = false;
+    }
+    s_paused = true;
+    s_status = PLAYER_PAUSED;
+    clear_title();
+    changed();
+}
+
+void player_play(void)
+{
+    if (!s_paused) {
+        return;
+    }
+    s_paused = false;
+    s_status = PLAYER_IDLE;
+    changed();
+    player_resume();
+}
+
+bool player_paused(void) { return s_paused; }
 
 void player_tick(void)
 {

@@ -1,8 +1,9 @@
 """
 Network surface (AI_RULES.md, Scope and security): station-only WiFi, IPv4, no listening
-sockets, no servers, no OTA of the radio, no Bluetooth. Outbound only, TLS verified with the
-CA bundle; plain HTTP only for the captive-portal probe, sign-in pages and http:// streams.
-The built firmware is checked too, by check_firmware.py in CI. (After SimplrSSH's test.)
+sockets, no servers, no OTA of the radio; Bluetooth LE only as a central for keyboards and
+remotes (no advertising, no GATT server, no Classic Bluetooth). Outbound only, TLS verified
+with the CA bundle; plain HTTP only for the captive-portal probe, sign-in pages and http://
+streams. The built firmware is checked too, by check_firmware.py in CI. (After SimplrSSH's test.)
 """
 
 import re
@@ -46,10 +47,10 @@ class SourceSurface(unittest.TestCase):
     def test_ipv4_only(self):
         self.assertEqual(find(r"\bAF_INET6\b|\bAF_UNSPEC\b"), [])
 
-    def test_no_servers_ota_bluetooth_mdns(self):
+    def test_no_servers_ota_classic_bluetooth_mdns(self):
         forbidden = r'#include\s*[<"](?:esp_http_server|esp_https_server|esp_https_ota|esp_ota_ops|' \
-                    r'esp_bt|esp_gap|esp_gatt|nimble|mdns|esp_now|esp_wifi_ap|esp_local_ctrl|captive_portal|' \
-                    r'wifi_prov)[^>"]*[>"]'
+                    r'esp_bt|esp_gap|esp_gatt|esp_a2dp|esp_spp|esp_hidd|esp_blufi|mdns|esp_now|esp_wifi_ap|' \
+                    r'esp_local_ctrl|captive_portal|wifi_prov)[^>"]*[>"]'
         hits = [h for h in find(forbidden) if "esp_ota_ops" not in h or "settings_nvs.cpp" not in h]
         self.assertEqual(hits, [], "esp_ota_ops is allowed only in settings_nvs.cpp (running partition)")
 
@@ -79,6 +80,42 @@ class SourceSurface(unittest.TestCase):
             with self.subTest(file=name):
                 self.assertNotRegex(code, r"skip_cert_common_name_check\s*=\s*true|use_global_ca_store|"
                                           r"MBEDTLS_SSL_VERIFY_NONE|MBEDTLS_SSL_VERIFY_OPTIONAL")
+
+
+class Bluetooth(unittest.TestCase):
+    """Bluetooth LE keyboards and remotes: a central that connects only to what the user paired."""
+
+    def test_nimble_only_in_bt_hid(self):
+        users = sorted({name for name, code in SRC.items()
+                        if re.search(r'#include\s*"(?:host/|nimble/|store/|services/)', code)})
+        self.assertEqual(users, ["main/bt_hid.cpp"])
+        self.assertEqual(find(r"\bble_hs_cfg\b|\bnimble_port_\w+\("),
+                         [h for h in find(r"\bble_hs_cfg\b|\bnimble_port_\w+\(") if h.startswith("main/bt_hid.cpp")])
+
+    def test_never_advertises_or_serves(self):
+        self.assertEqual(find(r"\bble_gap_(?:ext_)?adv_\w+\s*\(|\bble_gatts_\w+\s*\(|\bble_svc_\w+_init\s*\("), [],
+                         "the radio is a central: no advertising, no GATT services")
+
+    def test_pairing_is_secure_and_bonds_stay_in_the_vault(self):
+        bt = SRC["main/bt_hid.cpp"]
+        self.assertIn("ble_hs_cfg.sm_sc = 1", bt)
+        self.assertIn("ble_hs_cfg.sm_bonding = 1", bt)
+        self.assertIn("ble_hs_cfg.store_write_cb = store_write", bt)
+        self.assertIn("bt_store::put_keys(", bt)
+        self.assertIn("vault::put(", SRC["main/bt_store.cpp"])
+        self.assertIn("CONFIG_BT_NIMBLE_NVS_PERSIST=n", repo.read("sdkconfig.defaults").splitlines())
+
+    def test_off_until_turned_on(self):
+        self.assertIn("s_bt_autostart = bt_store::enabled()", SRC["main/app.cpp"])
+        self.assertIn('nvs_get_u8(h, "on", &on) == ESP_OK && on == 1', SRC["main/bt_store.cpp"])
+
+    def test_device_names_cleaned_and_reports_bounded(self):
+        bt = SRC["main/bt_hid.cpp"]
+        self.assertIn("text_to_ascii(", bt)
+        self.assertIn("HID_MAX_MAP_BYTES - s_map_len", bt)
+        self.assertIn("sizeof(data)", bt)
+        self.assertNotRegex(SRC["main/hid_report.c"] + SRC["main/hid_report.h"], r'#include\s*"(?:esp_|freertos|host/)')
+        self.assertIn("hid_report.c", repo.read("test", "host", "CMakeLists.txt"))
 
 
 class SignInPages(unittest.TestCase):
@@ -132,7 +169,10 @@ class ConfigSurface(unittest.TestCase):
     def test_defaults_declare_the_surface(self):
         defaults = repo.read("sdkconfig.defaults")
         for option in ("CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n", "CONFIG_LWIP_DHCPS=n", "CONFIG_LWIP_IPV6=n",
-                       "CONFIG_BT_ENABLED=n", "CONFIG_ESP_WIFI_NVS_ENABLED=n", "CONFIG_ESP_TLS_INSECURE=n"):
+                       "CONFIG_ESP_WIFI_NVS_ENABLED=n", "CONFIG_ESP_TLS_INSECURE=n",
+                       "CONFIG_BT_NIMBLE_ENABLED=y", "CONFIG_BT_BLUEDROID_ENABLED=n",
+                       "CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n", "CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n",
+                       "CONFIG_BT_NIMBLE_GATT_SERVER=n", "CONFIG_BT_NIMBLE_NVS_PERSIST=n", "CONFIG_BT_NIMBLE_SM_SC=y"):
             with self.subTest(option=option):
                 self.assertIn(option, defaults)
         # The Tab5's WiFi driver runs on its C6: the same surface on the co-processor's side

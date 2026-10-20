@@ -95,7 +95,7 @@ class Settings(unittest.TestCase):
         for code in SRC.values():
             used |= set(re.findall(r'settings_nvs::open\(\s*"(\w+)"', code))
             used |= set(re.findall(r'static const char\s*\*\s*(?:NS|NS_\w+)\s*=\s*"(\w+)"', code))
-        self.assertEqual(used, {"radio", "wifi", "vault", "vault_dev"})
+        self.assertEqual(used, {"radio", "wifi", "vault", "vault_dev", "bt"})
         rules = repo.read("AI_RULES.md")
         for ns in used:
             with self.subTest(namespace=ns):
@@ -140,6 +140,18 @@ class Bounds(unittest.TestCase):
         self.assertIn(f"stations {stations}", bounds)
         self.assertIn(f"station directory reply {reply_kb} KB in PSRAM", bounds)
         self.assertIn(f"scan results {scan}", bounds)
+
+    def test_bluetooth_bounds(self):
+        rules = re.sub(r"\s+", " ", repo.read("AI_RULES.md"))
+        devices = int(re.search(r"MAX_DEVICES = (\d+);", SRC["main/bt_store.hpp"]).group(1))
+        found = int(re.search(r"MAX_FOUND = (\d+);", SRC["main/bt_hid.hpp"]).group(1))
+        map_bytes = int(re.search(r"#define HID_MAX_MAP_BYTES\s+(\d+)", SRC["main/hid_report.h"]).group(1))
+        bounds = re.search(r"Bound every collection \(([^)]*)\)", rules).group(1)
+        self.assertIn(f"paired Bluetooth devices {devices}", bounds)
+        self.assertIn(f"Bluetooth scan results {found}", bounds)
+        self.assertIn(f"HID report map {map_bytes} bytes", bounds)
+        sdk = repo.read("sdkconfig.defaults")
+        self.assertIn(f"CONFIG_BT_NIMBLE_MAX_BONDS={devices}", sdk)
 
     def test_sign_in_page_bounds(self):
         header = repo.read("main", "portal.hpp")
@@ -274,7 +286,8 @@ class Ui(unittest.TestCase):
         # Every blocking call sits inside a run_job() in the same function (the worker runs it)
         app = SRC["main/app.cpp"]
         for call in ("wifi::connect(", "wifi::scan(", "wifi::auto_connect(", "wifi::start(", "radio_browser_fetch(",
-                     "portal::probe(", "portal::fetch("):
+                     "portal::probe(", "portal::fetch(", "bt_hid::start(", "bt_hid::stop(", "bt_hid::scan(",
+                     "bt_hid::pair("):
             for m in re.finditer(re.escape(call), app):
                 job = app.rfind("run_job(", 0, m.start())
                 with self.subTest(call=call, offset=m.start()):
@@ -283,7 +296,7 @@ class Ui(unittest.TestCase):
 
     def test_player_waits_outside_the_display_lock(self):
         app = SRC["main/app.cpp"]
-        for call in ("player_stop()", "player_resume()", "player_set_stations("):
+        for call in ("player_stop()", "player_resume()", "player_set_stations(", "player_pause()", "player_play()"):
             with self.subTest(call=call):
                 for m in re.finditer(re.escape(call), app):
                     before = app[max(0, m.start() - 40):m.start()]
@@ -297,13 +310,13 @@ class Ui(unittest.TestCase):
 
     def test_page_model_is_host_tested(self):
         for name in ("main/ui_page.cpp", "main/ui_page.hpp", "main/text.c", "main/tab5_keymap.c",
-                     "main/tdeck_keymap.c"):
+                     "main/tdeck_keymap.c", "main/hid_report.c", "main/hid_keymap.c"):
             with self.subTest(file=name):
                 self.assertNotRegex(SRC[name], r'#include\s*[<"](lvgl\.h|esp_|freertos/)',
                                     "keep host-tested code free of LVGL / ESP-IDF headers")
         host = repo.read("test", "host", "CMakeLists.txt")
         for name in ("ui_page.cpp", "text.c", "tab5_keymap.c", "tdeck_keymap.c", "portal.cpp", "secret_vault.cpp",
-                     "settings.cpp"):
+                     "settings.cpp", "hid_report.c", "hid_keymap.c", "bt_store.cpp"):
             self.assertIn(f"${{MAIN_DIR}}/{name}", host)
 
     def test_network_text_cleaned_for_the_screen(self):

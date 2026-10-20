@@ -26,7 +26,12 @@ CONFIG_ESP_HOSTED_HOST_RESET_GPIO=15
 # board_wifi_prepare() starts esp_hosted when WiFi is first used. Started before app_main (the
 # default), it would run while the C6 is still unpowered.
 CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN=n
-# No Bluetooth over the co-processor
+# Bluetooth LE through the C6 too: esp_hosted carries HCI over the same SDIO link and NimBLE
+# runs here (board_bt_prepare); the P4 has no Bluetooth controller of its own
+CONFIG_ESP_HOSTED_HOST_FEAT_BT=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+CONFIG_BT_NIMBLE_TRANSPORT_UART=n
+# The pre-3.0 Bluetooth options stay off (esp_hosted 3.x fails the build on them)
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=n
 CONFIG_ESP_HOSTED_ENABLE_BT_BLUEDROID=n
 # Station only and no password copy on the host side either (see sdkconfig.defaults); the C6

@@ -20,6 +20,10 @@ idf_component_register(
     SRCS
         "app.cpp"
         ${BOARD_SRCS}
+        "bt_hid.cpp"
+        "bt_store.cpp"
+        "hid_keymap.c"
+        "hid_report.c"
         "lv_mem_psram.c"
         "mp3_decoder.c"
         "player.c"
@@ -38,6 +42,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         app_update
+        bt
         esp_app_format
         esp_driver_gpio
         esp_driver_i2s

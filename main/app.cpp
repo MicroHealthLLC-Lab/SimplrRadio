@@ -7,7 +7,8 @@
  *                        polls the keyboard, ticks the player. Holds the display lock
  *                        while it changes the screen, never while it waits.
  *   worker               runs one blocking job at a time (WiFi start / scan / connect, the
- *                        station directory, sign-in pages) and posts its result back, so the
+ *                        station directory, sign-in pages, Bluetooth start / stop / scan /
+ *                        pair) and posts its result back, so the
  *                        screen stays responsive. A job's result is dropped if the user left
  *                        the screen that asked for it (generation counter).
  *   LVGL (esp_lvgl_port) draws; its callbacks only post events.
@@ -19,6 +20,8 @@
  */
 
 #include "board.h"
+#include "bt_hid.hpp"
+#include "bt_store.hpp"
 #include "keys.h"
 #include "player.h"
 #include "portal_client.hpp"
@@ -121,6 +124,9 @@ enum class Screen {
     SearchState,
     SearchCount,
     About,
+    Bluetooth,
+    BtScan,
+    BtForgetConfirm,
     PortalPage,
     PortalField,     // Prompt
     PortalOption,
@@ -162,6 +168,14 @@ static portal::Page s_portal;
 static portal::Cookies s_cookies;
 static int s_portal_field = -1;
 static int s_portal_selected = -1;
+
+// Bluetooth keyboards and remotes
+static std::vector<bt_hid::Found> s_bt_found;
+static bool s_bt_scanned;
+static bool s_bt_switching;             // Bluetooth is being turned on or off
+static bool s_bt_autostart;             // Turn it on once the radio is up (it was on)
+static bt_store::Device s_bt_forget;
+static uint32_t s_bt_version = UINT32_MAX;
 
 // Last status shown in the title bar
 static uint32_t s_np_version = UINT32_MAX;
@@ -274,7 +288,8 @@ static void update_status()
         s_rssi = wifi::rssi();
         s_rssi_at = now_ms();
     }
-    s_ui.set_status(s_link_up, s_link_up ? s_rssi : -100, player_volume(), player_muted());
+    s_ui.set_status(s_link_up, s_link_up ? s_rssi : -100, player_volume(), player_muted(),
+                    bt_hid::state() == bt_hid::State::Connected);
 }
 
 static void refresh_now_playing()
@@ -296,6 +311,7 @@ static void refresh_now_playing()
         np.song = title;
     }
     np.muted = player_muted();
+    np.paused = player_paused();
     if (!s_np_typed.empty()) {
         np.status = "Go to station " + s_np_typed + "_   (Enter)";
     } else if (!s_link_up && s_booted) {
@@ -314,6 +330,7 @@ static void refresh_now_playing()
                 np.status_warn = true;
                 break;
             case PLAYER_IDLE: np.status = "Stopped"; break;
+            case PLAYER_PAUSED: np.status = "Paused - press Play to listen again"; break;
             case PLAYER_PLAYING: np.status = np.muted ? "Muted" : ""; break;
         }
     }
@@ -331,6 +348,63 @@ static std::string signal_detail(const wifi::Network& n)
 }
 
 static void build_portal_page(ui::Page& p);
+
+static bool bt_on()
+{
+    bt_hid::State st = bt_hid::state();
+    return st != bt_hid::State::Off && st != bt_hid::State::Unavailable;
+}
+
+static std::string bt_name(const std::string& name)
+{
+    return name.empty() ? std::string("Unnamed device") : name;
+}
+
+static std::string bt_address(const uint8_t addr[6])
+{
+    char text[8];
+    snprintf(text, sizeof(text), "%02X:%02X", addr[1], addr[0]);   // The last two bytes, to tell twins apart
+    return text;
+}
+
+// The Bluetooth page's status line
+static std::string bt_status()
+{
+    uint32_t code = 0;
+    if (s_bt_switching) {
+        return bt_on() ? "Turning Bluetooth off..." : "Starting Bluetooth...";
+    }
+    if (bt_hid::passkey(code)) {
+        char text[96];
+        snprintf(text, sizeof(text), "Type %06u on the keyboard, then press Enter.", (unsigned)code);
+        return text;
+    }
+    std::string device = bt_name(bt_hid::device());
+    switch (bt_hid::state()) {
+        case bt_hid::State::Off:
+            return "Off. Turn it on to use a Bluetooth keyboard or remote: media keys, arrows and typing "
+                   "work the radio. (Bluetooth LE only: headphones and speakers can't connect.)";
+        case bt_hid::State::Unavailable:
+            return "Bluetooth didn't start on this radio (its radio chip has no Bluetooth controller "
+                   "available).";
+        case bt_hid::State::Scanning: return "Looking for keyboards and remotes...";
+        case bt_hid::State::Connecting: return "Connecting to " + device + "...";
+        case bt_hid::State::Pairing: return "Pairing with " + device + "...";
+        case bt_hid::State::Setup: return "Setting up " + device + "...";
+        case bt_hid::State::Connected: return "Connected: " + device + ".";
+        case bt_hid::State::Idle: break;
+    }
+    return bt_hid::waiting() ? "On. Your paired devices connect by themselves when they are switched on."
+                             : "On. No device paired yet: pick 'Pair a keyboard or remote'.";
+}
+
+static std::string bt_summary()
+{
+    if (bt_hid::state() == bt_hid::State::Connected) {
+        return bt_name(bt_hid::device());
+    }
+    return bt_hid::state() == bt_hid::State::Unavailable ? "not available" : bt_on() ? "on" : "off";
+}
 
 // The page for the current screen
 static void build_page(ui::Page& p)
@@ -362,7 +436,8 @@ static void build_page(ui::Page& p)
                 ui::row("3", "Station search", LV_SYMBOL_DIRECTORY, search_summary(), ui::Mark::More),
                 ui::row("4", "Sign in to this network", LV_SYMBOL_RIGHT, up ? "cafe / hotel page" : "not connected",
                         ui::Mark::More),
-                ui::row("5", "About", LV_SYMBOL_HOME, "", ui::Mark::More),
+                ui::row("5", "Bluetooth", LV_SYMBOL_BLUETOOTH, bt_summary(), ui::Mark::More),
+                ui::row("6", "About", LV_SYMBOL_HOME, "", ui::Mark::More),
                 ui::back_row("Now Playing"),
             };
             break;
@@ -547,11 +622,58 @@ static void build_page(ui::Page& p)
             p.info += "Stations: " + std::to_string(player_count()) + " (" + search_summary() + ")\n";
             p.info += "Free memory: " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024) +
                       " KB internal, " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB PSRAM\n";
-            p.info += std::string("Settings: ") + settings_nvs::partition() + " partition, WiFi passwords encrypted\n";
+            p.info += "Bluetooth: " + bt_summary() + "\n";
+            p.info += std::string("Settings: ") + settings_nvs::partition() +
+                      " partition, WiFi passwords and Bluetooth keys encrypted\n";
             p.info += "Stations from radio-browser.info";
             p.rows = {ui::back_row()};
             break;
         }
+
+        case Screen::Bluetooth: {
+            p.title = "Bluetooth";
+            p.info = bt_status();
+            p.rows = {
+                ui::row("1", "Bluetooth", LV_SYMBOL_BLUETOOTH, bt_on() ? "on - choose to turn off" : "off - choose to turn on"),
+                ui::row("2", "Pair a keyboard or remote", LV_SYMBOL_PLUS, bt_on() ? "" : "turn Bluetooth on first",
+                        ui::Mark::More),
+            };
+            std::vector<bt_store::Device> devices = bt_store::devices();
+            for (size_t i = 0; i < devices.size(); i++) {
+                bool here = bt_hid::is_connected(devices[i]);
+                p.rows.push_back(ui::row(std::to_string(i + 3), bt_name(devices[i].name), LV_SYMBOL_KEYBOARD,
+                                         std::string(here ? "connected" : "paired") + " - choose to forget"));
+            }
+            p.rows.push_back(ui::back_row());
+            break;
+        }
+
+        case Screen::BtScan: {
+            p.title = "Pair a device";
+            if (!s_bt_scanned) {
+                p.info = "Looking for keyboards and remotes... Put yours in pairing mode now (see its manual).";
+                p.busy = true;
+                break;
+            }
+            p.info = s_bt_found.empty() ? "No keyboard or remote found. Is it in pairing mode?"
+                                        : "Strongest first. Pick yours:";
+            for (size_t i = 0; i < s_bt_found.size(); i++) {
+                const bt_hid::Found& f = s_bt_found[i];
+                p.rows.push_back(ui::row(std::to_string(i + 1), bt_name(f.name), LV_SYMBOL_BLUETOOTH,
+                                         std::string(ui::signal_words(f.rssi)) + ", " + bt_address(f.addr)));
+            }
+            p.rows.push_back(ui::row(std::to_string(s_bt_found.size() + 1), "Look again", LV_SYMBOL_REFRESH));
+            p.rows.push_back(ui::back_row());
+            break;
+        }
+
+        case Screen::BtForgetConfirm:
+            p.title = "Forget device";
+            p.info = "Forget " + bt_name(s_bt_forget.name) + "? To use it again, pair it again.";
+            p.rows = {ui::row("y", "Forget it", LV_SYMBOL_TRASH), ui::row("n", "Keep it", LV_SYMBOL_CLOSE)};
+            p.rows[0].tone = ui::Tone::Danger;
+            p.selected = 1;
+            break;
 
         case Screen::PortalPage:
         case Screen::PortalField:
@@ -831,6 +953,81 @@ static void auto_connect(bool quiet)
         delete joined;
         delete error;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Bluetooth
+// ---------------------------------------------------------------------------
+
+// Turns Bluetooth on or off (worker: NimBLE start / stop block); remembered for the next boot
+static void bt_switch(bool on)
+{
+    auto* err = new esp_err_t(ESP_OK);
+    bool started = run_job(
+        [=]() {
+            if (on) {
+                *err = bt_hid::start();
+            } else {
+                bt_hid::stop();
+            }
+        },
+        [=]() {
+            s_bt_switching = false;
+            bt_store::set_enabled(on && *err == ESP_OK);
+            if (on && *err != ESP_OK) {
+                s_notice.add("Bluetooth didn't start.\n");
+            }
+            delete err;
+            if (s_screen == Screen::Bluetooth) {
+                refresh();
+            } else {
+                update_status();
+            }
+        });
+    if (started) {
+        s_bt_switching = true;
+    } else {
+        delete err;
+    }
+}
+
+static void bt_scan()
+{
+    s_bt_scanned = false;
+    s_bt_found.clear();
+    go(Screen::BtScan);
+    auto* list = new std::vector<bt_hid::Found>();
+    auto* err = new esp_err_t(ESP_FAIL);
+    uint32_t gen = s_generation;
+    bool started = run_job([=]() { *err = bt_hid::scan(*list); },
+                           [=]() {
+                               if (gen == s_generation && s_screen == Screen::BtScan) {
+                                   if (*err != ESP_OK) {
+                                       s_notice.add("Bluetooth scan failed - try again.\n");
+                                   }
+                                   s_bt_found = *list;
+                                   s_bt_scanned = true;
+                                   render();
+                               }
+                               delete list;
+                               delete err;
+                           });
+    if (!started) {
+        delete list;
+        delete err;
+        s_bt_scanned = true;
+        render();
+    }
+}
+
+static void bt_pair(const bt_hid::Found& device)
+{
+    bt_hid::Found* d = new bt_hid::Found(device);
+    bool started = run_job([d]() { bt_hid::pair(*d); }, [d]() { delete d; });
+    if (!started) {
+        delete d;
+    }
+    go(Screen::Bluetooth);   // Shows the progress (and the code to type)
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,7 +1426,52 @@ static void answer(const std::string& raw)
                     portal_load(NULL, false, true);
                 }
             } else if (key == "5") {
+                go(Screen::Bluetooth);
+            } else if (key == "6") {
                 go(Screen::About);
+            }
+            break;
+
+        case Screen::Bluetooth: {
+            std::vector<bt_store::Device> devices = bt_store::devices();
+            if (key == "1") {
+                if (!s_bt_switching) {
+                    bt_switch(!bt_on());
+                }
+                render();
+            } else if (key == "2") {
+                if (!bt_on() || s_bt_switching) {
+                    s_notice.add("Turn Bluetooth on first.\n");
+                    render();
+                } else {
+                    bt_scan();
+                }
+            } else if (n >= 3 && n < 3 + (int)devices.size()) {
+                s_bt_forget = devices[n - 3];
+                go(Screen::BtForgetConfirm);
+            }
+            break;
+        }
+
+        case Screen::BtScan: {
+            int count = (int)s_bt_found.size();
+            if (!s_bt_scanned) {
+                break;
+            } else if (n >= 1 && n <= count) {
+                bt_pair(s_bt_found[n - 1]);
+            } else if (n == count + 1) {
+                bt_scan();
+            }
+            break;
+        }
+
+        case Screen::BtForgetConfirm:
+            if (key == "y") {
+                bt_hid::forget(s_bt_forget);
+                s_notice.add(("Forgot " + bt_name(s_bt_forget.name) + ".\n").c_str());
+                go(Screen::Bluetooth);
+            } else if (key == "n") {
+                go(Screen::Bluetooth);
             }
             break;
 
@@ -1473,7 +1715,12 @@ static void back()
         case Screen::Wifi:
         case Screen::Search:
         case Screen::About:
+        case Screen::Bluetooth:
             go(Screen::Menu);
+            break;
+        case Screen::BtScan:
+        case Screen::BtForgetConfirm:
+            go(Screen::Bluetooth);
             break;
         case Screen::WifiScan:
             go(Screen::Wifi);
@@ -1525,6 +1772,31 @@ static void activate_row(int row)
     }
 }
 
+// Pause / Play: both wait on the stream's tasks, so they run past the display lock
+static void toggle_pause()
+{
+    if (player_paused()) {
+        defer([]() { player_play(); });
+    } else {
+        defer([]() { player_pause(); });
+    }
+}
+
+// Media keys (Bluetooth keyboards and remotes) work on every screen once the radio is up
+static bool media_key(uint32_t key)
+{
+    switch (key) {
+        case KEY_PLAY_PAUSE: toggle_pause(); break;
+        case KEY_NEXT_TRACK: player_step(1); break;
+        case KEY_PREV_TRACK: player_step(-1); break;
+        case KEY_VOL_UP: player_set_volume(player_volume() + 5); break;
+        case KEY_VOL_DOWN: player_set_volume(player_volume() - 5); break;
+        case KEY_MUTE: player_set_muted(!player_muted()); break;
+        default: return false;
+    }
+    return true;
+}
+
 static void now_playing_key(uint32_t key)
 {
     if (key >= '0' && key <= '9') {
@@ -1554,7 +1826,8 @@ static void now_playing_key(uint32_t key)
         case KEY_RIGHT: case '.': case '>': player_step(1); break;
         case KEY_UP: case '+': case '=': player_set_volume(player_volume() + 5); break;
         case KEY_DOWN: case '-': case '_': player_set_volume(player_volume() - 5); break;
-        case ' ': case 'm': case 'M': player_set_muted(!player_muted()); break;
+        case ' ': case 'p': case 'P': toggle_pause(); break;
+        case 'm': case 'M': player_set_muted(!player_muted()); break;
         case KEY_ENTER: case 's': case 'S': go(Screen::Stations); break;
         case 'w': case 'W': go(Screen::Wifi); break;
         case KEY_ESC: case KEY_TAB: go(Screen::Menu); break;
@@ -1639,6 +1912,14 @@ static void page_key(uint32_t key)
 
 static void on_key(uint32_t key)
 {
+    if (s_booted && media_key(key)) {
+        if (s_screen == Screen::NowPlaying) {
+            refresh_now_playing();
+        } else {
+            update_status();
+        }
+        return;
+    }
     if (key == KEY_GO_HOME) {
         if (s_booted && s_screen != Screen::Boot) {
             go(Screen::NowPlaying);
@@ -1661,6 +1942,7 @@ static void on_button(int button)
     switch (button) {
         case NP_MENU: go(Screen::Menu); break;
         case NP_PREV: player_step(-1); break;
+        case NP_PAUSE: toggle_pause(); break;
         case NP_NEXT: player_step(1); break;
         case NP_MUTE: player_set_muted(!player_muted()); break;
         case NP_VOL_DOWN: player_set_volume(player_volume() - 5); break;
@@ -1751,6 +2033,13 @@ static void handle(const Event& ev)
 }
 
 // Background work, once per loop
+// The next key from the device's keyboard, else from a Bluetooth keyboard or remote
+static uint32_t next_key()
+{
+    uint32_t key = board_read_key();
+    return key ? key : bt_hid::read_key();
+}
+
 static void housekeeping()
 {
     int64_t now = now_ms();
@@ -1774,6 +2063,24 @@ static void housekeeping()
     if (s_link_up && s_reload_at && now >= s_reload_at && !s_busy) {
         s_reload_at = 0;
         load_stations();
+    }
+    // Bluetooth: results to show, the page to refresh, and starting it once the radio is up
+    uint32_t bv = bt_hid::version();
+    if (bv != s_bt_version) {
+        s_bt_version = bv;
+        std::string m = bt_hid::take_message();
+        if (!m.empty()) {
+            s_notice.add(m.c_str());
+        }
+        if (s_screen == Screen::Bluetooth || (!m.empty() && s_screen != Screen::NowPlaying && s_screen != Screen::BtScan)) {
+            refresh();
+        } else {
+            update_status();
+        }
+    }
+    if (s_bt_autostart && s_booted && !s_busy && !s_loading_stations && s_screen != Screen::Busy) {
+        s_bt_autostart = false;
+        bt_switch(true);
     }
     uint32_t v = player_version();
     if (v != s_np_version) {
@@ -1832,6 +2139,7 @@ extern "C" void app_main(void)
         s_notice.add("The audio output failed to start.\n");
     }
     wifi::on_link(on_link);
+    s_bt_autostart = bt_store::enabled();   // Started once WiFi is up (Tab5: the C6 link)
 
     if (lvgl_port_lock(0)) {
         boot_start();
@@ -1841,7 +2149,7 @@ extern "C" void app_main(void)
     for (;;) {
         Event ev;
         bool got = xQueueReceive(s_events, &ev, pdMS_TO_TICKS(20)) == pdTRUE;
-        uint32_t key = board_read_key();
+        uint32_t key = next_key();
         if (got || key) {
             lvgl_port_lock(0);
             if (got) {
@@ -1852,7 +2160,7 @@ extern "C" void app_main(void)
             }
             for (int i = 0; key && i < 16; i++) {
                 on_key(key);
-                key = board_read_key();
+                key = next_key();
             }
             lvgl_port_unlock();
         }

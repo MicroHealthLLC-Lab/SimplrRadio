@@ -7,7 +7,7 @@
 #   cmake -S test/host -B build-host && cmake --build build-host && ctest --test-dir build-host
 #
 # Two suites, run by separate CI jobs: "unit" and "persistence" (settings partition choice,
-# the vault and the radio's settings across reboots).
+# the vault, the radio's settings and its Bluetooth devices across reboots).
 cmake_minimum_required(VERSION 3.16)
 project(simplrradio_host_tests C CXX)
 
@@ -31,6 +31,9 @@ find_library(MBEDCRYPTO mbedcrypto REQUIRED)
 
 # Firmware sources under test, compiled exactly as they are in main/
 add_library(firmware STATIC
+    ${MAIN_DIR}/bt_store.cpp
+    ${MAIN_DIR}/hid_keymap.c
+    ${MAIN_DIR}/hid_report.c
     ${MAIN_DIR}/portal.cpp
     ${MAIN_DIR}/secret_vault.cpp
     ${MAIN_DIR}/settings.cpp
@@ -46,6 +49,8 @@ target_include_directories(firmware PUBLIC idf_stubs ${MAIN_DIR} ${CMAKE_CURRENT
 target_link_libraries(firmware PUBLIC ${MBEDCRYPTO})
 
 add_executable(unit_tests test_main.cpp
+    tests/test_hid_keymap.cpp
+    tests/test_hid_report.cpp
     tests/test_portal.cpp
     tests/test_tab5_keymap.cpp
     tests/test_tdeck_keymap.cpp
@@ -55,6 +60,7 @@ add_executable(unit_tests test_main.cpp
 target_link_libraries(unit_tests firmware)
 
 add_executable(persistence_tests test_main.cpp
+    tests/test_bt_store.cpp
     tests/test_secret_vault.cpp
     tests/test_settings.cpp
     tests/test_settings_nvs.cpp

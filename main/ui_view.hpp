@@ -2,7 +2,7 @@
  * UI View
  * Everything on the screen, drawn with plain LVGL objects and a few shared styles (the
  * SimplrSSH look: dark background, one accent colour, symbol-font icons):
- *   - the title bar: back arrow, page title, WiFi and volume status
+ *   - the title bar: back arrow, page title, volume, Bluetooth and WiFi status
  *   - menu pages (ui_page.hpp): numbered rows, details, marks, a notice card
  *   - prompt pages: a text field with an on-screen keyboard (touch) or a hardware keyboard,
  *     passwords masked with a Show toggle
@@ -35,7 +35,7 @@ namespace theme
 }
 
 // Now Playing's control buttons (on_button)
-enum NpButton { NP_MENU, NP_PREV, NP_MUTE, NP_NEXT, NP_VOL_DOWN, NP_VOL_UP, NP_STATIONS, NP_BUTTONS };
+enum NpButton { NP_MENU, NP_PREV, NP_PAUSE, NP_NEXT, NP_MUTE, NP_VOL_DOWN, NP_VOL_UP, NP_STATIONS, NP_BUTTONS };
 
 struct NowPlaying {
     std::string station;     // "" while there are no stations
@@ -44,6 +44,7 @@ struct NowPlaying {
     std::string status;      // "Connecting...", "Station unavailable", "" when playing
     bool status_warn = false;
     bool muted = false;
+    bool paused = false;     // The pause button shows Play
 };
 
 class UiView
@@ -54,7 +55,7 @@ public:
     // Title bar
     void set_title(const std::string& title);
     void set_back(bool shown);
-    void set_status(bool wifi, int rssi, int volume, bool muted);
+    void set_status(bool wifi, int rssi, int volume, bool muted, bool bluetooth);   // bluetooth: a device connected
 
     // Menu and prompt pages; menus highlight `selected`
     void show_page(const ui::Page& page, const std::string& notice, int selected);
@@ -90,6 +91,7 @@ private:
     lv_obj_t* title_label = NULL;
     lv_obj_t* wifi_label = NULL;
     lv_obj_t* volume_label = NULL;
+    lv_obj_t* bt_label = NULL;
     lv_obj_t* page = NULL;
     lv_obj_t* notice_label = NULL;
     lv_obj_t* field = NULL;
@@ -106,6 +108,7 @@ private:
     lv_obj_t* np_status = NULL;
     lv_obj_t* np_spectrum = NULL;
     lv_obj_t* np_mute_label = NULL;
+    lv_obj_t* np_pause_label = NULL;
     lv_timer_t* spectrum_timer = NULL;
 
     bool page_shown() const { return page && !lv_obj_is_hidden(page); }

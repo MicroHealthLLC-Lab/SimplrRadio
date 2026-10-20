@@ -160,14 +160,25 @@ class FirmwareChecks(unittest.TestCase):
     def test_surface_negative_controls(self):
         cfg = dict(check_firmware.REQUIRED_CONFIG)
         self.assertEqual(check_firmware.surface_problems(self.GOOD, cfg), [])
-        for bad in ("lwip_listen", "httpd_start", "esp_https_ota_begin", "esp_bt_controller_init",
+        for bad in ("lwip_listen", "httpd_start", "esp_https_ota_begin", "esp_bt_gap_start_discovery",
+                    "btc_init", "ble_gap_adv_start", "ble_gatts_add_svcs", "ble_store_config_persist_our_secs",
                     "mdns_init", "esp_netif_create_default_wifi_ap", "esp_ota_begin", "dhcps_start"):
             with self.subTest(symbol=bad):
                 self.assertTrue(check_firmware.surface_problems(self.GOOD | {bad}, cfg))
         for missing in ("esp_crt_bundle_attach", "esp_wifi_set_storage", "esp_aes_gcm_auth_decrypt"):
             with self.subTest(missing=missing):
                 self.assertTrue(check_firmware.surface_problems(self.GOOD - {missing}, cfg))
+        # Bluetooth LE as a central is allowed; Bluedroid, advertising roles, a GATT server or
+        # NimBLE's own key store are not
+        ble = dict(cfg, CONFIG_BT_ENABLED="y", **check_firmware.REQUIRED_CONFIG_BT)
+        central = self.GOOD | {"ble_gap_connect", "ble_gattc_read", "esp_bt_controller_init"}
+        self.assertEqual(check_firmware.surface_problems(central, ble), [])
         self.assertTrue(check_firmware.surface_problems(self.GOOD, dict(cfg, CONFIG_BT_ENABLED="y")))
+        for option, bad in (("CONFIG_BT_NIMBLE_ROLE_PERIPHERAL", "y"), ("CONFIG_BT_BLUEDROID_ENABLED", "y"),
+                            ("CONFIG_BT_NIMBLE_GATT_SERVER", "y"), ("CONFIG_BT_NIMBLE_NVS_PERSIST", "y"),
+                            ("CONFIG_BT_NIMBLE_SM_SC", "n")):
+            with self.subTest(option=option):
+                self.assertTrue(check_firmware.surface_problems(self.GOOD, dict(ble, **{option: bad})))
         self.assertTrue(check_firmware.surface_problems(self.GOOD, dict(cfg, CONFIG_LWIP_IPV6="y")))
         missing_bundle = {k: v for k, v in cfg.items() if k != "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE"}
         self.assertTrue(check_firmware.surface_problems(self.GOOD, missing_bundle))
