@@ -231,7 +231,7 @@ jobs:
                 idf.py $B merge-bin -o "SimplrRadio-$board-ci-release.bin"
                 idf.py $B launcher-bin
                 python -m esp_idf_size --format json -o "build-$board/size.json" "build-$board/SimplrRadio.map"
-                nm=riscv32-esp-elf-nm   # ESP32-P4 (Tab5); the T-Deck's ESP32-S3 is Xtensa
+                nm=riscv32-esp-elf-nm   # ESP32-P4 (Tab5); the T-Deck (ESP32-S3) is Xtensa
                 [ "$board" = tdeck ] && nm=xtensa-esp32s3-elf-nm
                 $nm --defined-only "build-$board/SimplrRadio.elf" > "build-$board/symbols.txt"
                 esp-idf-sbom create "build-$board/project_description.json" -o "build-$board/sbom.spdx"
