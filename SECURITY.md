@@ -36,6 +36,24 @@ and how to reproduce it.
 radio, and kept the password in plain text. 2.0 removed the access point and the web server
 entirely; setup happens on the screen.
 
+## Repository settings
+
+The repository is public: anyone can read, clone and fork it, and nothing more. Its GitHub
+settings (not in the tree; the same as SimplrSSH's; change them only on purpose): issues,
+wiki, discussions and projects are off; only collaborators can open pull requests; workflows
+from an outside contributor's fork wait for approval; the default workflow token is read-only
+and cannot approve pull requests (each workflow declares what it writes); a ruleset stops
+deletion and force-pushes of `main` and `integration` (repository admins bypass it); secret
+scanning with push protection, Dependabot alerts and private vulnerability reporting are on.
+
+**Secrets stay here.** The security scan needs `secrets.AWS_ROLE` (an OIDC role, no stored AWS
+keys) on this repository, or shared with it by the organization (an org secret limited to
+private repositories never reaches a public one), and the role's OIDC trust must include
+`repo:MicroHealthLLC/esp32-p4-webradio`, so a fork's workflows can't assume it. A fork never
+receives this repository's secrets or variables, and GitHub doesn't pass secrets to workflows
+run for pull requests from forks; no workflow uses `pull_request_target`
+(test/guards/test_supply_chain.py), and outside contributors' fork workflows need approval.
+
 ## Checks
 
 The Tests workflow audits ESP-IDF and every component against the NVD (reviewed exceptions in
