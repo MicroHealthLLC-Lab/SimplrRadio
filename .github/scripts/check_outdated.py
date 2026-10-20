@@ -28,7 +28,7 @@ def fetch_json(url):
     # Only the two HTTPS APIs above: never file:// or another host
     if not url.startswith(ALLOWED_PREFIXES):
         raise ValueError(f"refusing to fetch {url!r}")
-    request = urllib.request.Request(url, headers={"User-Agent": "esp32-p4-webradio-dependency-check"})
+    request = urllib.request.Request(url, headers={"User-Agent": "simplrradio-dependency-check"})
     token = os.environ.get("GITHUB_TOKEN")
     if token and url.startswith("https://api.github.com/"):
         request.add_header("Authorization", f"Bearer {token}")

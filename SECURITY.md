@@ -49,7 +49,7 @@ scanning with push protection, Dependabot alerts and private vulnerability repor
 **Secrets stay here.** The security scan needs `secrets.AWS_ROLE` (an OIDC role, no stored AWS
 keys) on this repository, or shared with it by the organization (an org secret limited to
 private repositories never reaches a public one), and the role's OIDC trust must include
-`repo:MicroHealthLLC/esp32-p4-webradio`, so a fork's workflows can't assume it. A fork never
+`repo:MicroHealthLLC/SimplrRadio`, so a fork's workflows can't assume it. A fork never
 receives this repository's secrets or variables, and GitHub doesn't pass secrets to workflows
 run for pull requests from forks; no workflow uses `pull_request_target`
 (test/guards/test_supply_chain.py), and outside contributors' fork workflows need approval.

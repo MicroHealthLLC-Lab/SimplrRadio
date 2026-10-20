@@ -1,4 +1,4 @@
-# ESP32-P4 Web Radio
+# SimplrRadio (ESP32-P4 Web Radio)
 
 A touchscreen internet radio for ESP32-P4 boards. It streams MP3 stations from the
 [Radio Browser](https://www.radio-browser.info/) directory and shows the station, the song

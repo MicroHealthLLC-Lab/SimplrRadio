@@ -113,7 +113,7 @@ static bool query(const char *server, int max_stations)
         .event_handler = http_event_handler,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 10000,
-        .user_agent = "esp32-p4-webradio/2",
+        .user_agent = "SimplrRadio/2",
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
