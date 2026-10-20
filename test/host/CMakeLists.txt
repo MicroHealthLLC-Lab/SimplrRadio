@@ -36,6 +36,7 @@ add_library(firmware STATIC
     ${MAIN_DIR}/settings.cpp
     ${MAIN_DIR}/settings_nvs.cpp
     ${MAIN_DIR}/tab5_keymap.c
+    ${MAIN_DIR}/tdeck_keymap.c
     ${MAIN_DIR}/text.c
     ${MAIN_DIR}/ui_page.cpp
     fake_idf.cpp
@@ -47,6 +48,7 @@ target_link_libraries(firmware PUBLIC ${MBEDCRYPTO})
 add_executable(unit_tests test_main.cpp
     tests/test_portal.cpp
     tests/test_tab5_keymap.cpp
+    tests/test_tdeck_keymap.cpp
     tests/test_text.cpp
     tests/test_ui_page.cpp
 )

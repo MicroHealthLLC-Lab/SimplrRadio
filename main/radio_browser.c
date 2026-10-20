@@ -88,6 +88,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
         if (evt->data_len > 0 && s_resp_len + evt->data_len < RESP_BUF_SIZE - 1) {
+            // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - the condition above keeps it inside RESP_BUF_SIZE with room for the NUL
             memcpy(s_resp_buf + s_resp_len, evt->data, evt->data_len);
             s_resp_len += evt->data_len;
         } else {
@@ -172,7 +173,7 @@ int radio_browser_fetch(radio_station_t *stations, int max_stations)
 
         // Skip stations without a usable stream URL (http/https only, and it must fit)
         if (!cJSON_IsString(url) || !url->valuestring || !web_url(url->valuestring) ||
-            strlen(url->valuestring) >= STATION_URL_LEN)
+            strnlen(url->valuestring, STATION_URL_LEN) >= STATION_URL_LEN)
             continue;
         if (!cJSON_IsString(name))
             continue;

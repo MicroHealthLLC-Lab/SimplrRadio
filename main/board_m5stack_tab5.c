@@ -10,7 +10,9 @@
 //   Keyboard: optional Tab5 Keyboard (tab5_keyboard.c)
 //   Audio   : ES8388 codec (BSP), biquad EQ, speaker muted while headphones are plugged in
 //   Power   : two PI4IOE5V6408 IO expanders: speaker amp, side-port 5 V, ESP32-C6 power, charger
+//   WiFi    : the ESP32-C6 co-processor over SDIO (esp_hosted + esp_wifi_remote)
 
+#include <stdio.h>
 #include <string.h>
 #include <math.h>
 
@@ -24,6 +26,8 @@
 #include "esp_codec_dev.h"
 #include "dsps_biquad.h"
 #include "dsps_biquad_gen.h"
+
+#include "esp_hosted.h"
 
 #include "audio.h"
 #include "board.h"
@@ -132,8 +136,40 @@ const board_ui_t *board_ui(void)
         .gap = 8,
         .button_h = 84,
         .keyboard_h = 300,
+        .key_back = "Esc",
+        .key_reveal = "Tab",
     };
     return &ui;
+}
+
+// -- WiFi co-processor ----------------------------------------------------
+// As SimplrSSH's Tab5 board: esp_hosted links to the C6 over SDIO once the C6 has power
+// (board_init_power), then the usual esp_wifi_* calls are forwarded to it (esp_wifi_remote).
+// esp_hosted 3.x works with the firmware the C6 ships with, so it is never updated.
+static bool s_wifi_ready;
+static char s_c6_version[24];
+
+esp_err_t board_wifi_prepare(void)
+{
+    if (s_wifi_ready) {
+        return ESP_OK;
+    }
+    if (esp_hosted_init() != 0 || esp_hosted_connect_to_slave() != 0) {
+        ESP_LOGE(TAG, "WiFi co-processor not responding");
+        return ESP_FAIL;
+    }
+    esp_hosted_coprocessor_fwver_t ver = {0};
+    if (esp_hosted_get_coprocessor_fwversion(&ver) == 0) {
+        snprintf(s_c6_version, sizeof(s_c6_version), "%u.%u.%u", (unsigned)ver.major1,
+                 (unsigned)ver.minor1, (unsigned)ver.patch1);
+    }
+    s_wifi_ready = true;
+    return ESP_OK;
+}
+
+const char *board_wifi_firmware(void)
+{
+    return s_c6_version[0] ? s_c6_version : "unknown";
 }
 
 // -- Keyboard -------------------------------------------------------------
@@ -161,8 +197,11 @@ static void eq_build(eq_preset_t preset, int sample_rate)
 {
     float fs = (float)sample_rate;
     int bands = 0;
-    memset(s_eq_wL, 0, sizeof(s_eq_wL));
-    memset(s_eq_wR, 0, sizeof(s_eq_wR));
+    // Fresh filter state (not a secret): zero every biquad delay line
+    for (int b = 0; b < EQ_MAX_BANDS; b++) {
+        s_eq_wL[b][0] = s_eq_wL[b][1] = 0.0f;
+        s_eq_wR[b][0] = s_eq_wR[b][1] = 0.0f;
+    }
     switch (preset) {
     case EQ_BASS:
         // Low shelf +4 dB at 120 Hz: warmth for headphones without clipping
@@ -315,6 +354,7 @@ esp_err_t audio_write(const int16_t *samples, size_t num_samples, size_t *sample
     (void)timeout_ms;
     const void *data = samples;
     if (s_eq_bands > 0 && num_samples > 0 && num_samples <= EQ_BUF_SAMPLES) {
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - num_samples <= EQ_BUF_SAMPLES, s_eq_buf's length, is checked above
         memcpy(s_eq_buf, samples, num_samples * sizeof(int16_t));
         eq_apply(s_eq_buf, (int)num_samples);
         data = s_eq_buf;

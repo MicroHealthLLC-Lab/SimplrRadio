@@ -119,10 +119,12 @@ void text_to_ascii(char *dst, size_t dstlen, const char *src)
             }
             dst[o++] = one;
         } else {
+            // noopengrep: mh.gitlab.c_buffer_rule-strlen-wcslen - rep is one of this file's replacement string literals
             size_t n = strlen(rep);   // Whole or not at all ("..." never becomes ".")
             if (o + n >= dstlen) {
                 break;
             }
+            // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - o + n < dstlen is checked just above
             memcpy(dst + o, rep, n);
             o += n;
         }

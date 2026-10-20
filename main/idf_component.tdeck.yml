@@ -1,0 +1,20 @@
+## LilyGO T-Deck / T-Deck Plus dependencies (copied to main/idf_component.yml at configure time;
+## see CMakeLists.txt). Pinned like idf_component.tab5.yml, to the versions SimplrSSH's T-Deck
+## firmware runs.
+dependencies:
+  idf: '~5.5.1'
+  # ST7789 display (SPI) and LVGL port, set up from Kconfig (sdkconfig.defaults.tdeck)
+  espressif/esp_bsp_generic: '==3.1.1'
+  espressif/esp_lcd_touch_gt911: '==1.2.1'
+  # What SimplrSSH's T-Deck build compiles: ESP-IDF 5.5.1's component manager lifts a 9.4.0 pin
+  # to 9.6.0~1 in its second, Kconfig-aware pass, so the pin says so (as on the Tab5)
+  lvgl/lvgl: '==9.6.0~1'
+  espressif/esp_lvgl_port: '==2.9.0'
+  # Not used directly: esp_bsp_generic needs them. led_strip is pinned to what the component
+  # manager's second, Kconfig-aware pass compiles, so the lock and the build agree. (That pass
+  # also lifts cmake_utilities 0.5.3 to 1.1.1, which can't be pinned: the first pass needs 0.x for
+  # esp_lcd_ili9341. It is a reviewed KNOWN_DRIFT in .github/scripts/check_dependencies.py.)
+  espressif/led_strip: '==3.1.0~1'
+  espressif/button: '==4.2.1'
+  chmorgan/esp-libhelix-mp3: '==1.0.3'
+  espressif/esp-dsp: '==1.8.2'

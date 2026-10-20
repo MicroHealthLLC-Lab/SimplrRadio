@@ -1,24 +1,47 @@
-# M5Stack Tab5: settings applied after sdkconfig.defaults. The full configuration is
-# sdkconfig.tab5 (committed): rebuild and commit it when changing a setting here.
-# Display, touch and audio come from the espressif/m5stack_tab5 BSP, which detects the
-# panel (ILI9881C, ST7123 or ST7121).
+# M5Stack Tab5 (ESP32-P4, 32 MB PSRAM, ESP32-C6 WiFi co-processor): settings applied after
+# sdkconfig.defaults. The full configuration is sdkconfig.tab5 (committed): rebuild and commit
+# it when changing a setting here. Display, touch and audio come from the espressif/m5stack_tab5
+# BSP, which detects the panel (ILI9881C, ST7123 or ST7121).
 
-# --- WiFi co-processor ---------------------------------------------------------------
-# The Tab5's ESP32-C6 is on SDIO slot 1 (CLK 12, CMD 13, D0-D3 11/10/9/8), reset on GPIO 15.
-# esp_hosted reads the per-slot PRIV keys (the plain SDIO_PIN keys are derived from the slot).
+# --- Chip, CPU, PSRAM ------------------------------------------------------------------
+# ESP32-P4 v1.x silicon: ESP-IDF 5.5.1 defaults to it (minimum rev 0.1, maximum below v2.0)
+CONFIG_IDF_TARGET="esp32p4"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+# 32 MB hex PSRAM at 200 MHz (marked experimental in ESP-IDF 5.5)
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_MODE_HEX=y
+CONFIG_SPIRAM_SPEED_200M=y
+
+# --- WiFi co-processor (ESP32-C6 over SDIO, esp_hosted) --------------------------------
+# As SimplrSSH's Tab5 build. The C6 sits on SDIO slot 1 (CLK 12, CMD 13, D0-D3 11/10/9/8,
+# reset GPIO 15); the Tab5 board preset sets those pins.
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_HOST_TRANSPORT_BUS_SDIO=y
+CONFIG_ESP32P4_TAB5_C6_BOARD=y
 CONFIG_ESP_HOSTED_SDIO_SLOT_1=y
-CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=13
-CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=12
-CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=11
-CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=10
-CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=9
-CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=8
-CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=15
-CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=15
+CONFIG_ESP_HOSTED_HOST_SDIO_BUS_WIDTH_4=y
+CONFIG_ESP_HOSTED_HOST_SDIO_CLK_KHZ=40000
+CONFIG_ESP_HOSTED_HOST_RESET_GPIO=15
+# The C6 is powered through an IO expander: board_init_power() turns it on, and
+# board_wifi_prepare() starts esp_hosted when WiFi is first used. Started before app_main (the
+# default), it would run while the C6 is still unpowered.
+CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN=n
+# No Bluetooth over the co-processor
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=n
+CONFIG_ESP_HOSTED_ENABLE_BT_BLUEDROID=n
+# Station only and no password copy on the host side either (see sdkconfig.defaults); the C6
+# is told the same at runtime (esp_wifi_set_storage(WIFI_STORAGE_RAM))
+CONFIG_WIFI_RMT_SOFTAP_SUPPORT=n
+CONFIG_WIFI_RMT_NVS_ENABLED=n
 
 # --- Display ---------------------------------------------------------------------------
 # The 720x1280 panel is shown as 1280x720 landscape; LVGL's frame is rotated by the PPA
 CONFIG_LVGL_PORT_ENABLE_PPA=y
+# Fonts: 16 (hints), 20 (text), 24 (title bar, rows), 40 (station name)
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_40=y
 
 # --- Audio -----------------------------------------------------------------------------
 CONFIG_CODEC_ES8388_SUPPORT=y

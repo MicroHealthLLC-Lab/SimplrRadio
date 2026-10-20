@@ -3,7 +3,7 @@
 # pinned ESP-IDF image, and keeps it the way the component manager writes it in its first
 # pass: registry components with their hashes.
 #
-#   scripts/update-lock.sh tab5|waveshare
+#   scripts/update-lock.sh tab5|tdeck
 #
 # Why not plain `idf.py update-dependencies`: LVGL 9.6's manifest has Kconfig-conditional
 # dependencies, so a configure from an empty build directory runs the component manager a
@@ -12,8 +12,8 @@
 # (every component is pinned with ==), but only the first-pass lock may be committed
 # (test/guards/test_supply_chain.py checks it). Also refreshes sdkconfig.<board>.
 set -euo pipefail
-board="${1:?usage: scripts/update-lock.sh tab5|waveshare}"
-case "$board" in tab5|waveshare) ;; *) echo "unknown board: $board" >&2; exit 2 ;; esac
+board="${1:?usage: scripts/update-lock.sh tab5|tdeck}"
+case "$board" in tab5|tdeck) ;; *) echo "unknown board: $board" >&2; exit 2 ;; esac
 cd "$(git rev-parse --show-toplevel)"
 image="espressif/idf:v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884"
 lock="dependencies.lock.$board"

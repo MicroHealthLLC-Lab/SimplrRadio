@@ -212,14 +212,14 @@ void UiView::set_status(bool wifi, int rssi, int volume, bool muted)
     }
     uint32_t color = !wifi ? theme::DANGER : rssi >= -67 ? theme::TEXT : rssi >= -75 ? theme::WARN : theme::DANGER;
     lv_obj_set_style_text_color(wifi_label, lv_color_hex(color), 0);
-    char text[24];
     if (muted) {
-        snprintf(text, sizeof(text), LV_SYMBOL_MUTE " Muted");
-    } else {
-        snprintf(text, sizeof(text), "%s %d", volume == 0 ? LV_SYMBOL_MUTE : volume < 50 ? LV_SYMBOL_VOLUME_MID
-                                                                                        : LV_SYMBOL_VOLUME_MAX,
-                 volume);
+        set_text(volume_label, LV_SYMBOL_MUTE " Muted");
+        return;
     }
+    char text[24];
+    snprintf(text, sizeof(text), "%s %d", volume == 0 ? LV_SYMBOL_MUTE : volume < 50 ? LV_SYMBOL_VOLUME_MID
+                                                                                    : LV_SYMBOL_VOLUME_MAX,
+             volume);
     set_text(volume_label, text);
 }
 
@@ -545,6 +545,7 @@ void UiView::prompt_wipe()
     // The text (for passwords, LVGL's plain copy) is overwritten before it is freed
     char* text = (char*)lv_textarea_get_text(field);
     if (text) {
+        // noopengrep: mh.gitlab.c_buffer_rule-strlen-wcslen - LVGL keeps the textarea text NUL-terminated (lv_textarea_set_max_length bounds it)
         mbedtls_platform_zeroize(text, strlen(text));
     }
     lv_textarea_set_text(field, "");
@@ -704,7 +705,9 @@ void UiView::spectrum_timer_cb(lv_timer_t* t)
         }
     }
     if (moved) {
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - both arrays are float[SPECTRUM_BANDS]
         memcpy(s_bands, bands, sizeof(s_bands));
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - both arrays are float[SPECTRUM_BANDS]
         memcpy(s_peaks, peaks, sizeof(s_peaks));
         lv_obj_invalidate(view->np_spectrum);
     }

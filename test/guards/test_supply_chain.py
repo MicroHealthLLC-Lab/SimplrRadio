@@ -1,7 +1,7 @@
 """
 Supply chain: every GitHub Action is pinned to a commit SHA, every container image to a
 digest, and every ESP-IDF component to an exact version recorded in each board's lock file
-(dependencies.lock.tab5, dependencies.lock.waveshare). From SimplrSSH's test_supply_chain.py.
+(dependencies.lock.tab5, dependencies.lock.tdeck). From SimplrSSH's test_supply_chain.py.
 """
 
 import os
@@ -101,7 +101,7 @@ class ActionsPinned(unittest.TestCase):
         self.assertIn("package-ecosystem: github-actions", repo.read(".github", "dependabot.yml"))
 
 
-BOARDS = ("tab5", "waveshare")
+BOARDS = {"tab5": "esp32p4", "tdeck": "esp32s3"}   # Board: chip
 
 
 def manifest_dependencies(board):
@@ -150,11 +150,11 @@ class ComponentsPinned(unittest.TestCase):
                     self.assertRegex(version, r"^==\d+\.\d+\.\d+(~\d+)?$", "pin components with ==x.y.z")
 
     def test_direct_dependencies_locked_at_same_version(self):
-        for board in BOARDS:
+        for board, chip in BOARDS.items():
             lock_name = f"dependencies.lock.{board}"
             lock = lock_entries(lock_name)
             with self.subTest(lock=lock_name):
-                self.assertIn("target: esp32p4", repo.read(lock_name))
+                self.assertIn(f"target: {chip}", repo.read(lock_name))
             for name, version in manifest_dependencies(board).items():
                 if name == "idf":
                     continue

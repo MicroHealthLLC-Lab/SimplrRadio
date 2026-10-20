@@ -4,7 +4,7 @@
  * Tasks
  *   app task (app_main)  owns every screen and the player. Waits on one event queue (keys,
  *                        touches handed over from LVGL, finished jobs, WiFi link changes),
- *                        polls the Tab5 Keyboard, ticks the player. Holds the display lock
+ *                        polls the keyboard, ticks the player. Holds the display lock
  *                        while it changes the screen, never while it waits.
  *   worker               runs one blocking job at a time (WiFi start / scan / connect, the
  *                        station directory, sign-in pages) and posts its result back, so the
@@ -12,9 +12,10 @@
  *                        the screen that asked for it (generation counter).
  *   LVGL (esp_lvgl_port) draws; its callbacks only post events.
  *
- * Screens follow SimplrSSH's menus: numbered rows (type the number, use Up/Down + Enter, or
- * tap), Esc or the title bar's arrow goes back one level, Ctrl+Del (Tab5) returns to Now
- * Playing. Questions are answered in a text field with the Tab5 Keyboard or the on-screen one.
+ * Screens follow SimplrSSH's menus: numbered rows (type the number, use Up/Down + Enter, the
+ * T-Deck's trackball, or tap), Esc / Left / the title bar's arrow goes back one level (T-Deck:
+ * hold the trackball), Ctrl+Del (Tab5) returns to Now Playing. Questions are answered in a
+ * text field with the hardware keyboard or the on-screen one.
  */
 
 #include "board.h"
@@ -25,7 +26,6 @@
 #include "secret_vault.hpp"
 #include "settings.h"
 #include "settings_nvs.hpp"
-#include "slave_ota.h"
 #include "ui_view.hpp"
 #include "wifi_mgr.hpp"
 
@@ -216,6 +216,17 @@ static void defer(std::function<void()> fn)
 // Text helpers
 // ---------------------------------------------------------------------------
 
+// "Enter = connect   Esc = back   Tab = show", in the board's key names
+static std::string keys_hint(const char* enter, bool reveal)
+{
+    const board_ui_t* ui = board_ui();
+    std::string hint = std::string("Enter = ") + enter + "   " + ui->key_back + " = back";
+    if (reveal) {
+        hint += ui->key_reveal ? std::string("   ") + ui->key_reveal + " = show" : "   tap Show to see it";
+    }
+    return hint;
+}
+
 static std::string shown(const std::string& ssid)
 {
     return portal::printable(ssid, 32);
@@ -229,6 +240,17 @@ static std::string shorten(const std::string& s, size_t max)
 static bool is_number(const std::string& s)
 {
     return !s.empty() && s.size() <= 3 && std::all_of(s.begin(), s.end(), ::isdigit);
+}
+
+// A typed number (up to three digits, is_number()), or -1
+static int number_value(const std::string& s)
+{
+    if (!is_number(s)) {
+        return -1;
+    }
+    char* end = nullptr;
+    long v = strtol(s.c_str(), &end, 10);
+    return end && *end == '\0' && v >= 0 && v <= 999 ? (int)v : -1;
 }
 
 static std::string search_summary()
@@ -450,7 +472,7 @@ static void build_page(ui::Page& p)
         case Screen::WifiHidden:
             p.title = "Hidden network";
             p.question = "Network name (SSID)";
-            p.hint = "Enter = next   Esc = back";
+            p.hint = keys_hint("next", false);
             p.max_len = 32;
             break;
 
@@ -459,8 +481,7 @@ static void build_page(ui::Page& p)
             p.question = "Password for " + shown(s_ssid);
             p.secret = true;
             p.max_len = 63;
-            p.hint = s_hidden ? "Leave it empty for an open network.   Enter = connect   Esc = back   Tab = show"
-                              : "Enter = connect   Esc = back   Tab = show";
+            p.hint = (s_hidden ? "Leave it empty for an open network.   " : "") + keys_hint("connect", true);
             break;
 
         case Screen::Search: {
@@ -520,7 +541,9 @@ static void build_page(ui::Page& p)
             } else {
                 p.info += "WiFi: not connected\n";
             }
-            p.info += std::string("WiFi chip firmware: ") + slave_ota_version() + "\n";
+            if (board_wifi_firmware()) {
+                p.info += std::string("WiFi chip firmware: ") + board_wifi_firmware() + "\n";
+            }
             p.info += "Stations: " + std::to_string(player_count()) + " (" + search_summary() + ")\n";
             p.info += "Free memory: " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024) +
                       " KB internal, " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB PSRAM\n";
@@ -1043,7 +1066,7 @@ static void build_portal_page(ui::Page& p)
         p.secret = secret;
         p.value = secret ? "" : f.value;
         p.max_len = portal::MAX_VALUE;
-        p.hint = secret ? "Enter = keep it   Esc = back   Tab = show" : "Enter = keep it   Esc = back";
+        p.hint = keys_hint("keep it", secret);
     } else {
         const portal::Field& f = s_portal.fields[s_portal_field];
         p.title = shorten(f.label, 40);
@@ -1150,7 +1173,7 @@ static void boot_start()
             [err]() {
                 if (*err != ESP_OK) {
                     s_boot_failed = true;
-                    s_boot_status = "The WiFi chip isn't responding. Try again, or restart the radio.";
+                    s_boot_status = "WiFi didn't start. Try again, or restart the radio.";
                     render();
                 } else {
                     s_booted = true;
@@ -1175,7 +1198,7 @@ static void answer(const std::string& raw)
 {
     std::string key = raw;
     std::transform(key.begin(), key.end(), key.begin(), ::tolower);
-    int n = is_number(key) ? atoi(key.c_str()) : -1;
+    int n = number_value(key);
     if (key == "0") {
         back();
         return;
@@ -1361,7 +1384,7 @@ static void submit()
 
         case Screen::WifiPassword:
             if (text.empty() && !s_hidden) {
-                s_notice.add("Type the network's password (Esc to go back).\n");
+                s_notice.add((std::string("Type the network's password (") + board_ui()->key_back + " to go back).\n").c_str());
                 render();
             } else if (!text.empty() && (text.size() < 8 || text.size() > 63)) {
                 s_notice.add("WiFi passwords have 8 to 63 characters.\n");
@@ -1403,7 +1426,7 @@ static void submit()
         }
 
         case Screen::SearchCount: {
-            int count = is_number(text) ? atoi(text.c_str()) : 0;
+            int count = number_value(text);
             if (count < 1 || count > SEARCH_COUNT_MAX) {
                 s_notice.add(("A number from 1 to " + std::to_string(SEARCH_COUNT_MAX) + ".\n").c_str());
                 render();
@@ -1513,7 +1536,7 @@ static void now_playing_key(uint32_t key)
         return;
     }
     if (key == KEY_ENTER && !s_np_typed.empty()) {
-        int n = atoi(s_np_typed.c_str());
+        int n = number_value(s_np_typed);
         s_np_typed.clear();
         if (n >= 1 && n <= player_count()) {
             player_select(n - 1);
@@ -1563,7 +1586,13 @@ static void page_key(uint32_t key)
         case KEY_PAGE_DOWN: s_ui.scroll(-1); return;
         case KEY_HOME: s_ui.select(0); return;
         case KEY_END: s_ui.select((int)s_page.rows.size() - 1); return;
+        // Left / Right (the T-Deck's trackball, the arrow keys): back a level / open the row
+        case KEY_LEFT:
         case KEY_ESC: back(); return;
+        case KEY_RIGHT:
+            s_typed.clear();
+            activate_row(s_ui.selected());
+            return;
         case KEY_BACKSPACE:
             if (!s_typed.empty()) {
                 s_typed.pop_back();
@@ -1765,6 +1794,8 @@ extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "SimplrRadio %s on %s", esp_app_get_description()->version, board_name());
     board_init_power();
+    // The screen first, so it is lit and drawing whatever happens next
+    lv_display_t* disp = board_display_start();
 
     settings_nvs::InitResult nvs = settings_nvs::init();
     if (vault::init()) {
@@ -1780,7 +1811,6 @@ extern "C" void app_main(void)
     s_jobs = xQueueCreate(4, sizeof(Job*));
     xTaskCreate(worker_task, "worker", 12288, NULL, 5, NULL);
 
-    lv_display_t* disp = board_display_start();
     if (!disp) {
         // Nothing can be set up or shown without the screen; the log says why
         ESP_LOGE(TAG, "Display failed to start; stopping");

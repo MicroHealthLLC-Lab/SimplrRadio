@@ -98,10 +98,11 @@ class ReleaseNotes(unittest.TestCase):
         notes = release_notes.build_notes("# X\n", "2.0.1",
                                           ("SimplrRadio-Tab5-v2.0.1-release.bin", "a" * 64,
                                            "SimplrRadio-Tab5-v2.0.1-launcher.bin", "b" * 64),
-                                          ("SimplrRadio-Waveshare-v2.0.1-release.bin", "c" * 64,
-                                           "SimplrRadio-Waveshare-v2.0.1-launcher.bin", "d" * 64))
+                                          ("SimplrRadio-TDeck-v2.0.1-release.bin", "c" * 64,
+                                           "SimplrRadio-TDeck-v2.0.1-launcher.bin", "d" * 64))
         for text in ("SimplrRadio-Tab5-v2.0.1-release.bin", "SimplrRadio-Tab5-v2.0.1-launcher.bin", "--chip esp32p4",
-                     "SimplrRadio-Waveshare-v2.0.1-release.bin", "SimplrRadio-Waveshare-v2.0.1-launcher.bin",
+                     "SimplrRadio-TDeck-v2.0.1-release.bin", "SimplrRadio-TDeck-v2.0.1-launcher.bin", "--chip esp32s3",
+                     "(ESP32-P4, 16 MB)", "(ESP32-S3, 16 MB)", "LilyGO T-Deck",
                      "Bmorcelli Launcher", "a" * 64, "b" * 64, "c" * 64, "d" * 64):
             self.assertIn(text, notes)
 
@@ -154,7 +155,7 @@ class FirmwareChecks(unittest.TestCase):
         self.assertEqual(check_firmware.key_material(parser), [])
 
     GOOD = {"esp_crt_bundle_attach", "esp_netif_create_default_wifi_sta", "esp_wifi_set_storage",
-            "esp_aes_gcm_auth_decrypt", "lwip_connect", "esp_hosted_slave_ota_begin"}
+            "esp_aes_gcm_auth_decrypt", "lwip_connect"}
 
     def test_surface_negative_controls(self):
         cfg = dict(check_firmware.REQUIRED_CONFIG)
@@ -172,7 +173,11 @@ class FirmwareChecks(unittest.TestCase):
         self.assertTrue(check_firmware.surface_problems(self.GOOD, missing_bundle))
 
     def test_surface_wifi_coprocessor_options(self):
-        cfg = dict(check_firmware.REQUIRED_CONFIG)
+        # Checked on the Tab5's ESP32-P4 only (the T-Deck's ESP32-S3 has WiFi built in)
+        cfg = dict(check_firmware.REQUIRED_CONFIG, CONFIG_IDF_TARGET='"esp32p4"', **check_firmware.REQUIRED_CONFIG_P4)
+        self.assertEqual(check_firmware.surface_problems(self.GOOD, cfg), [])
+        s3 = dict(check_firmware.REQUIRED_CONFIG, CONFIG_IDF_TARGET='"esp32s3"')
+        self.assertEqual(check_firmware.surface_problems(self.GOOD, s3), [])
         for option, bad in (("CONFIG_WIFI_RMT_SOFTAP_SUPPORT", "y"), ("CONFIG_WIFI_RMT_NVS_ENABLED", "y"),
                             ("CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE", "y"), ("CONFIG_ESP_WIFI_REMOTE_ENABLED", "n"),
                             ("CONFIG_LWIP_DHCPS", "y")):
@@ -194,9 +199,9 @@ class FirmwareChecks(unittest.TestCase):
                 self.assertEqual(check_firmware.cmd_size([f.name, "--board", "tab5"]), 1)
                 self.assertEqual(check_firmware.cmd_size([f.name, "--board", "tab5", "--budget", str(10 ** 9)]), 0)
             with open(f.name, "w") as g:
-                json.dump({"used_diram": check_firmware.BUDGETS["waveshare"] - 1}, g)
+                json.dump({"used_diram": check_firmware.BUDGETS["tdeck"] - 1}, g)
             with redirect_stdout(io.StringIO()):
-                self.assertEqual(check_firmware.cmd_size([f.name, "--board", "waveshare"]), 0)
+                self.assertEqual(check_firmware.cmd_size([f.name, "--board", "tdeck"]), 0)
         finally:
             os.unlink(f.name)
 
@@ -255,12 +260,16 @@ class Dependencies(unittest.TestCase):
         self.assertIsNone(check_dependencies.first_install_pass("nothing here"))
 
     def test_repository_locks_parse(self):
-        for board in ("tab5", "waveshare"):
+        for board in ("tab5", "tdeck"):
             locked = check_dependencies.lock_versions(repo.read(f"dependencies.lock.{board}"))
             with self.subTest(board=board):
                 self.assertEqual(locked.get("lvgl/lvgl"), "9.6.0~1")
                 self.assertNotIn("idf", locked)
         self.assertEqual(check_dependencies.KNOWN_DRIFT, {}, "pins keep both resolve passes in agreement")
+        # The one reviewed exception: a CMake helper on the T-Deck that the first pass can't take
+        self.assertEqual(check_dependencies.KNOWN_DRIFT_TDECK, {"espressif/cmake_utilities": ("0.5.3", "1.1.1")})
+        self.assertEqual(check_dependencies.lock_versions(repo.read("dependencies.lock.tdeck"))
+                         .get("espressif/cmake_utilities"), "0.5.3")
 
     def run_check(self, compiled, lock_text, defaults="CONFIG_A=y\n", generated="CONFIG_A=y\n", board="tab5",
                   board_defaults=""):
@@ -297,7 +306,7 @@ class Dependencies(unittest.TestCase):
 
     def test_board_defaults_override_shared_ones(self):
         compiled = {"espressif/button": "4.2.1", "lvgl/lvgl": "9.4.0"}
-        for board in ("tab5", "waveshare"):
+        for board in ("tab5", "tdeck"):
             with self.subTest(board=board):
                 self.assertEqual(self.run_check(compiled, self.LOCK, defaults="CONFIG_A=n\n", generated="CONFIG_A=y\n",
                                                 board=board, board_defaults="CONFIG_A=y\n"), [])

@@ -4,11 +4,11 @@
  * SimplrSSH look: dark background, one accent colour, symbol-font icons):
  *   - the title bar: back arrow, page title, WiFi and volume status
  *   - menu pages (ui_page.hpp): numbered rows, details, marks, a notice card
- *   - prompt pages: a text field with an on-screen keyboard (touch) or the Tab5 Keyboard,
+ *   - prompt pages: a text field with an on-screen keyboard (touch) or a hardware keyboard,
  *     passwords masked with a Show toggle
  *   - Now Playing: station, song, status, a live spectrum and the control buttons
- * Sizes and fonts come from board_ui(), so it fits the Tab5's 1280x720 and the Waveshare's
- * 720x720. All calls are made with the display lock held. The on_* callbacks run in LVGL's
+ * Sizes and fonts come from board_ui(), so it fits the Tab5's 1280x720 and the T-Deck's
+ * 320x240. All calls are made with the display lock held. The on_* callbacks run in LVGL's
  * task with the lock held: they only post an event for the app task.
  */
 

@@ -125,17 +125,22 @@ check_firmware = repo.ci_script("check_firmware")
 
 class ConfigSurface(unittest.TestCase):
     def test_committed_sdkconfigs(self):
-        for board in ("tab5", "waveshare"):
+        for board in ("tab5", "tdeck"):
             with self.subTest(board=board):
                 self.assertEqual(check_firmware.sdkconfig_problems(repo.sdkconfig(f"sdkconfig.{board}")), [])
 
     def test_defaults_declare_the_surface(self):
         defaults = repo.read("sdkconfig.defaults")
         for option in ("CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n", "CONFIG_LWIP_DHCPS=n", "CONFIG_LWIP_IPV6=n",
-                       "CONFIG_BT_ENABLED=n", "CONFIG_WIFI_RMT_SOFTAP_SUPPORT=n", "CONFIG_WIFI_RMT_NVS_ENABLED=n",
-                       "CONFIG_ESP_WIFI_NVS_ENABLED=n", "CONFIG_ESP_TLS_INSECURE=n"):
+                       "CONFIG_BT_ENABLED=n", "CONFIG_ESP_WIFI_NVS_ENABLED=n", "CONFIG_ESP_TLS_INSECURE=n"):
             with self.subTest(option=option):
                 self.assertIn(option, defaults)
+        # The Tab5's WiFi driver runs on its C6: the same surface on the co-processor's side
+        tab5 = repo.read("sdkconfig.defaults.tab5")
+        for option in ("CONFIG_WIFI_RMT_SOFTAP_SUPPORT=n", "CONFIG_WIFI_RMT_NVS_ENABLED=n",
+                       "CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=n", "CONFIG_ESP_HOSTED_ENABLE_BT_BLUEDROID=n"):
+            with self.subTest(option=option):
+                self.assertIn(option, tab5)
 
     def test_wifi_password_not_stored_by_the_driver(self):
         self.assertIn("esp_wifi_set_storage(WIFI_STORAGE_RAM)", SRC["main/wifi_mgr.cpp"])

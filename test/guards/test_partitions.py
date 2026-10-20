@@ -45,7 +45,7 @@ class DirectFlashLayout(unittest.TestCase):
         self.assertEqual(self.parts["factory"]["offset"] % 0x10000, 0)
 
     def test_no_separate_c6_firmware_partition(self):
-        # The C6 firmware is embedded in the app (slave_ota.c), so every install method has it
+        # No firmware is carried for the Tab5's C6: esp_hosted 3.x works with what it ships with
         self.assertNotIn("slave_fw", self.parts)
 
     def test_defaults_use_this_table(self):
@@ -98,9 +98,8 @@ class FirmwareMatchesLayout(unittest.TestCase):
         min_size = int(re.search(r"MIN_SIZE = (0x[0-9a-fA-F]+)", code).group(1), 16)
         self.assertLessEqual(min_size, by_name(repo.partitions("partitions_launcher.csv"))[OWN_LABEL]["size"])
 
-    def test_c6_firmware_embedded(self):
-        self.assertIn("target_add_binary_data", repo.read("main", "CMakeLists.txt"))
-        self.assertIn("_binary_network_adapter_bin_start", repo.read("main", "slave_ota.c"))
+    def test_no_c6_firmware_embedded(self):
+        self.assertNotIn("target_add_binary_data", repo.read("main", "CMakeLists.txt"))
 
 
 if __name__ == "__main__":

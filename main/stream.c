@@ -73,10 +73,10 @@ static void icy_reset(stream_ctx_t *ctx, int metaint)
 // Parse "StreamTitle='...'" from an ICY metadata block.
 static void parse_icy_meta(stream_ctx_t *ctx, const char *meta, int len)
 {
-    const char *key = "StreamTitle='";
-    const char *p = strnstr(meta, key, len);
+    static const char KEY[] = "StreamTitle='";
+    const char *p = strnstr(meta, KEY, len);
     if (!p) return;
-    p += strlen(key);
+    p += sizeof(KEY) - 1;
     // The ICY value is delimited by "';" (e.g. StreamTitle='...';StreamUrl=...).
     // Match that pair so apostrophes inside the title (e.g. "Ain't") survive.
     const char *avail = meta + len;
@@ -95,6 +95,7 @@ static void parse_icy_meta(stream_ctx_t *ctx, const char *meta, int len)
     int tlen = end - p;
     char title[256];
     if (tlen >= (int)sizeof(title)) tlen = sizeof(title) - 1;
+    // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - tlen is clamped to sizeof(title) - 1 on the line above
     memcpy(title, p, tlen);
     title[tlen] = '\0';
 
@@ -128,6 +129,7 @@ static void feed_data(stream_ctx_t *ctx, const uint8_t *data, int len)
             }
             int take = ctx->meta_need - ctx->meta_have;
             if (take > len) take = len;
+            // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - meta_have + take <= meta_need <= 255 * 16 = ICY_META_MAX, and meta_buf is ICY_META_MAX + 1
             memcpy(ctx->meta_buf + ctx->meta_have, data, take);
             ctx->meta_have += take;
             data += take; len -= take;
@@ -294,7 +296,7 @@ void stream_start(const char *url, icy_meta_cb_t meta_cb)
     s_failed = false;
     // Station URLs come from a public directory: only plain web streams are opened
     if (!url || (strncasecmp(url, "http://", 7) != 0 && strncasecmp(url, "https://", 8) != 0) ||
-        strlen(url) >= STREAM_URL_MAX) {
+        strnlen(url, STREAM_URL_MAX) >= STREAM_URL_MAX) {
         ESP_LOGW(TAG, "Refusing stream URL");
         s_failed = true;
         return;

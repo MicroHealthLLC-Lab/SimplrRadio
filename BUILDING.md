@@ -5,38 +5,45 @@ This covers building and flashing the firmware yourself. To just run it, install
 
 ## Requirements
 
-- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/) **v5.5.1** with the ESP32-P4
-  toolchain, or Docker with the same image CI uses:
+- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/) **v5.5.1** with the ESP32-P4 and
+  ESP32-S3 toolchains, or Docker with the same image CI uses:
   `espressif/idf:v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884`.
-- One of the supported boards (ESP32-P4 v1.x silicon + ESP32-C6 WiFi co-processor).
+- One of the two supported boards: the M5Stack Tab5 (ESP32-P4 v1.x + ESP32-C6 WiFi
+  co-processor) or the LilyGO T-Deck / T-Deck Plus (ESP32-S3, 16 MB flash, 8 MB PSRAM).
 
 ## Selecting a board
 
-The board comes from the `BOARD` environment variable (`tab5`, the default, or `waveshare`).
-It selects the board source files, the component manifest (`main/idf_component.<board>.yml`),
-the component lock (`dependencies.lock.<board>`) and the configuration (`sdkconfig.defaults`
-+ `sdkconfig.defaults.<board>`, applied to the committed `sdkconfig.<board>`). Use one build
-directory per board:
+The board comes from the `BOARD` environment variable (`tab5`, the default, or `tdeck`), and
+the board decides the chip (`esp32p4` / `esp32s3`; an `IDF_TARGET` that disagrees is an
+error). It selects the board source files, the component manifest
+(`main/idf_component.<board>.yml`), the component lock (`dependencies.lock.<board>`) and the
+configuration (`sdkconfig.defaults` + `sdkconfig.defaults.<board>`, applied to the committed
+`sdkconfig.<board>`). Use one build directory per board, and clear `managed_components/` when
+switching boards (their components differ):
 
 ```bash
 BOARD=tab5 idf.py -B build-tab5 build
-BOARD=waveshare idf.py -B build-waveshare build
+rm -rf managed_components
+BOARD=tdeck idf.py -B build-tdeck build
 ```
 
 ## Flash
 
 ```bash
 BOARD=tab5 idf.py -B build-tab5 -p /dev/ttyACM0 flash monitor
+BOARD=tdeck idf.py -B build-tdeck -p /dev/ttyACM0 flash monitor
 ```
 
-The ESP32-C6 firmware (`slave_fw/network_adapter.bin`, esp_hosted 2.12.3) is embedded in the
-app: `idf.py flash` brings it along, and the first start updates the C6 if needed.
+The Tab5's ESP32-C6 keeps the firmware it shipped with: esp_hosted 3.x (as in SimplrSSH) works
+with it, so nothing is ever flashed to the C6.
 
 ## Release images
 
 ```bash
 BOARD=tab5 idf.py -B build-tab5 merge-bin -o SimplrRadio-Tab5-v<ver>-release.bin   # flash at 0x0
 BOARD=tab5 idf.py -B build-tab5 launcher-bin   # build-tab5/SimplrRadio-Tab5-v<ver>-launcher.bin
+BOARD=tdeck idf.py -B build-tdeck merge-bin -o SimplrRadio-TDeck-v<ver>-release.bin
+BOARD=tdeck idf.py -B build-tdeck launcher-bin  # build-tdeck/SimplrRadio-TDeck-v<ver>-launcher.bin
 ```
 
 The launcher image uses `partitions_launcher.csv`: the app at `0x50000` and, before it, the
@@ -51,7 +58,8 @@ comes from `FIRMWARE_VERSION` (CI) or `PROJECT_VER` in `CMakeLists.txt`.
 | Launcher (`partitions_launcher.csv`) | `simplrradio`, 256 KB | the launcher keeps it across updates |
 
 `main/settings_nvs.cpp` picks the partition at boot. To forget every network and setting on a
-directly flashed radio: `esptool.py --chip esp32p4 erase_region 0x610000 0x40000`.
+directly flashed radio: `esptool.py --chip esp32p4 erase_region 0x610000 0x40000` (T-Deck:
+`--chip esp32s3`).
 
 ## Tests
 
@@ -61,7 +69,8 @@ SKIP_SAST=1 scripts/check.sh
 ```
 
 - `test/host/`: the hardware-independent firmware code (sign-in page parser, page model, Tab5
-  key map, text cleanup, vault, settings, settings partition) built for Linux with ASan/UBSan.
+  and T-Deck key maps, text cleanup, vault, settings, settings partition) built for Linux with
+  ASan/UBSan.
 - `test/guards/`: Python checks that keep [AI_RULES.md](AI_RULES.md) true (supply chain,
   partitions, network surface, firmware rules, CI scripts).
 
@@ -105,19 +114,18 @@ main/stream.c           HTTP(S) stream + ICY metadata into a ring buffer
 main/mp3_decoder.c      libhelix MP3 decode to the codec and the spectrum
 main/spectrum.c         512-point FFT (esp-dsp), 32 log-spaced bands
 main/radio_browser.c    station directory (HTTPS, mirrors)
-main/wifi_mgr.cpp       WiFi via the ESP32-C6, saved networks, auto-connect
+main/wifi_mgr.cpp       WiFi (Tab5: via the ESP32-C6), saved networks, auto-connect
 main/portal*.cpp        captive-portal sign-in pages
 main/secret_vault.cpp   AES-256-GCM WiFi passwords
 main/settings*.cpp      settings partition, radio settings
-main/slave_ota.c        ESP32-C6 firmware update from the embedded image
-main/board_m5stack_tab5.c     Tab5: BSP display/touch (all panels), ES8388, EQ, headphone jack
-main/board_waveshare_p4_720.c Waveshare: ST7703 on LVGL, GT911, ES8311
-main/tab5_keyboard.c, tab5_keymap.c   Tab5 Keyboard
-components/esp_lcd_st7703     Waveshare panel driver (vendored)
+main/board_m5stack_tab5.c     Tab5: BSP display/touch (all panels), ES8388, EQ, headphone jack, C6 link
+main/board_tdeck.c            T-Deck: BSP ST7789 display, GT911 touch, I2S speaker
+main/tab5_keyboard.c, tab5_keymap.c     Tab5 Keyboard
+main/tdeck_keyboard.c, tdeck_keymap.c   T-Deck keyboard and trackball
 ```
 
-`board.h` / `audio.h` are the interfaces each board file implements; fonts and sizes come from
-`board_ui()`.
+`board.h` / `audio.h` are the interfaces each board file implements; fonts, sizes and key
+names come from `board_ui()`.
 
 ### Notes
 
@@ -125,5 +133,11 @@ components/esp_lcd_st7703     Waveshare panel driver (vendored)
   them apart by probing the touch controller. LVGL renders landscape and the PPA rotates it.
 - **Tab5 power:** the IO expanders' outputs are set push-pull (after the driver's reset every
   pin is high-impedance), powering the WiFi chip, the speaker amp and the keyboard's 5 V.
+- **Tab5 WiFi:** esp_hosted 3.0.9 + esp_wifi_remote 1.6.5 as in SimplrSSH, started by the app
+  (`board_wifi_prepare()`) once the C6 is powered, never by a constructor before `app_main`.
+- **T-Deck:** GPIO 10 powers every peripheral; the display, touch, keyboard and trackball are
+  set up as in SimplrSSH's T-Deck board. The speaker amplifier (MAX98357A) has no volume
+  control, so volume and mute are applied to the samples, and the one speaker plays left +
+  right.
 - **Streaming** sends a VLC `User-Agent` (some stations require it).
 - **Console:** UART primary + USB-JTAG secondary.

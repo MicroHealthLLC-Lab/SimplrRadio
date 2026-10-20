@@ -4,8 +4,8 @@
 #   - SimplrRadio-Tab5-v<version>-release.bin, to flash at offset 0x0 (16 MB)
 #   - SimplrRadio-Tab5-v<version>-launcher.bin, to install with a launcher such as
 #     bmorcelli/Launcher (M5 Launcher): same app, partitions_launcher.csv with the settings partition
-#   Waveshare ESP32-P4-WIFI6-Touch-LCD-4B:
-#   - SimplrRadio-Waveshare-v<version>-release.bin (0x0) and SimplrRadio-Waveshare-v<version>-launcher.bin
+#   LilyGO T-Deck / T-Deck Plus (ESP32-S3):
+#   - SimplrRadio-TDeck-v<version>-release.bin (0x0) and SimplrRadio-TDeck-v<version>-launcher.bin
 #
 # Versions and releases (see .github/scripts/plan_release.py):
 #   - Every push to main publishes a release, auto-incrementing the patch number from
@@ -103,24 +103,24 @@ jobs:
             sha256sum SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin > SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
             sha256sum SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin > SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
 
-      # The Waveshare from an empty managed_components/ (the boards' components differ), into
-      # build-waveshare/
-      - name: Build and merge Waveshare images (ESP-IDF ${{ env.ESP_IDF_VERSION }})
+      # The T-Deck (ESP32-S3) from an empty managed_components/ (the boards' components
+      # differ), into build-tdeck/
+      - name: Build and merge T-Deck images (ESP-IDF ${{ env.ESP_IDF_VERSION }})
         uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
         with:
           esp_idf_version: v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884  # espressif/idf:v5.5.1 pinned by digest
-          target: esp32p4
-          extra_docker_args: -e FIRMWARE_VERSION=${{ steps.plan.outputs.version }} -e BOARD=waveshare
+          target: esp32s3
+          extra_docker_args: -e FIRMWARE_VERSION=${{ steps.plan.outputs.version }} -e BOARD=tdeck
           # The action wraps this in bash -c '...', so it must not contain single quotes
           command: >-
             set -o pipefail &&
             rm -rf managed_components &&
-            idf.py -B build-waveshare build 2>&1 | tee build-output-waveshare.log &&
-            idf.py -B build-waveshare merge-bin -o SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin &&
-            idf.py -B build-waveshare launcher-bin &&
-            cd build-waveshare &&
-            sha256sum SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin > SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
-            sha256sum SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin > SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
+            idf.py -B build-tdeck build 2>&1 | tee build-output-tdeck.log &&
+            idf.py -B build-tdeck merge-bin -o SimplrRadio-TDeck-v${{ steps.plan.outputs.version }}-release.bin &&
+            idf.py -B build-tdeck launcher-bin &&
+            cd build-tdeck &&
+            sha256sum SimplrRadio-TDeck-v${{ steps.plan.outputs.version }}-release.bin > SimplrRadio-TDeck-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
+            sha256sum SimplrRadio-TDeck-v${{ steps.plan.outputs.version }}-launcher.bin > SimplrRadio-TDeck-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
 
       - name: Collect images
         env:
@@ -128,7 +128,7 @@ jobs:
         run: |
           mkdir -p dist
           cp build-tab5/SimplrRadio-Tab5-v"$VERSION"-*.bin build-tab5/SimplrRadio-Tab5-v"$VERSION"-*.bin.sha256 dist/
-          cp build-waveshare/SimplrRadio-Waveshare-v"$VERSION"-*.bin build-waveshare/SimplrRadio-Waveshare-v"$VERSION"-*.bin.sha256 dist/
+          cp build-tdeck/SimplrRadio-TDeck-v"$VERSION"-*.bin build-tdeck/SimplrRadio-TDeck-v"$VERSION"-*.bin.sha256 dist/
           ls -la dist
 
       - name: Summarize
@@ -145,7 +145,7 @@ jobs:
             for f in dist/*.bin; do
               case "$f" in
                 *-launcher.bin) how="with a launcher (Bmorcelli Launcher / M5 Launcher)" ;;
-                *) how="flash at \`0x0\` (ESP32-P4, 16 MB)" ;;
+                *) how="flash at \`0x0\` (16 MB)" ;;
               esac
               echo "| \`$(basename "$f")\` | $(stat -c %s "$f") bytes | $how | \`$(cut -d' ' -f1 "$f.sha256")\` |"
             done
@@ -163,7 +163,7 @@ jobs:
         continue-on-error: true
         run: |
           python3 .github/scripts/report_warnings.py build-output-tab5.log
-          python3 .github/scripts/report_warnings.py build-output-waveshare.log
+          python3 .github/scripts/report_warnings.py build-output-tdeck.log
 
       - name: Upload firmware
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -216,8 +216,8 @@ jobs:
       TAG: ${{ needs.build.outputs.tag }}
       TAB5_IMAGE: SimplrRadio-Tab5-v${{ needs.build.outputs.version }}-release.bin
       TAB5_LAUNCHER_IMAGE: SimplrRadio-Tab5-v${{ needs.build.outputs.version }}-launcher.bin
-      WAVESHARE_IMAGE: SimplrRadio-Waveshare-v${{ needs.build.outputs.version }}-release.bin
-      WAVESHARE_LAUNCHER_IMAGE: SimplrRadio-Waveshare-v${{ needs.build.outputs.version }}-launcher.bin
+      TDECK_IMAGE: SimplrRadio-TDeck-v${{ needs.build.outputs.version }}-release.bin
+      TDECK_LAUNCHER_IMAGE: SimplrRadio-TDeck-v${{ needs.build.outputs.version }}-launcher.bin
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -246,7 +246,7 @@ jobs:
           sha() { cut -d' ' -f1 "firmware/dist/$1.sha256"; }
           python3 .github/scripts/release_notes.py "$VERSION" \
             "$TAB5_IMAGE" "$(sha "$TAB5_IMAGE")" "$TAB5_LAUNCHER_IMAGE" "$(sha "$TAB5_LAUNCHER_IMAGE")" \
-            "$WAVESHARE_IMAGE" "$(sha "$WAVESHARE_IMAGE")" "$WAVESHARE_LAUNCHER_IMAGE" "$(sha "$WAVESHARE_LAUNCHER_IMAGE")" \
+            "$TDECK_IMAGE" "$(sha "$TDECK_IMAGE")" "$TDECK_LAUNCHER_IMAGE" "$(sha "$TDECK_LAUNCHER_IMAGE")" \
             release-notes.md
 
       - name: Publish ${{ needs.build.outputs.tag }}
@@ -265,7 +265,7 @@ jobs:
             firmware/dist/${{ env.TAB5_IMAGE }}.sha256
             firmware/dist/${{ env.TAB5_LAUNCHER_IMAGE }}
             firmware/dist/${{ env.TAB5_LAUNCHER_IMAGE }}.sha256
-            firmware/dist/${{ env.WAVESHARE_IMAGE }}
-            firmware/dist/${{ env.WAVESHARE_IMAGE }}.sha256
-            firmware/dist/${{ env.WAVESHARE_LAUNCHER_IMAGE }}
-            firmware/dist/${{ env.WAVESHARE_LAUNCHER_IMAGE }}.sha256
+            firmware/dist/${{ env.TDECK_IMAGE }}
+            firmware/dist/${{ env.TDECK_IMAGE }}.sha256
+            firmware/dist/${{ env.TDECK_LAUNCHER_IMAGE }}
+            firmware/dist/${{ env.TDECK_LAUNCHER_IMAGE }}.sha256

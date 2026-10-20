@@ -1,15 +1,15 @@
 # SimplrRadio
 
 An internet radio for the **M5Stack Tab5** (with or without its keyboard) and the
-**Waveshare ESP32-P4 4" touch board**. Join WiFi on the screen, pick from popular stations
-near you, and listen, with the station, the song and a live spectrum on the display.
+**LilyGO T-Deck**. Join WiFi on the screen, pick from popular stations near you, and listen,
+with the station, the song and a live spectrum on the display.
 
 > SimplrRadio is a fork of [**esp32-p4-webradio**](https://github.com/dmatking/esp32-p4-webradio)
 > by [David M. King (@dmatking)](https://github.com/dmatking). Thanks to him for the original
-> radio: the streaming, MP3 decoding, spectrum analyzer, the Waveshare and Tab5 bring-up, and
-> the ESP32-C6 firmware update. It is released under the same MIT license (see
-> [LICENSE](LICENSE)). Its menus, WiFi setup, sign-in pages, encrypted passwords and CI come
-> from [**SimplrSSH**](https://github.com/MicroHealthLLC/SimplrSSH). Full credits are
+> radio: the streaming, MP3 decoding, spectrum analyzer and the first Tab5 bring-up. It is
+> released under the same MIT license (see [LICENSE](LICENSE)). Its menus, WiFi setup, sign-in
+> pages, encrypted passwords, T-Deck and Tab5 board support and CI come from
+> [**SimplrSSH**](https://github.com/MicroHealthLLC/SimplrSSH). Full credits are
 > [below](#credits).
 
 ## Supported devices
@@ -17,14 +17,13 @@ near you, and listen, with the station, the song and a live spectrum on the disp
 - **M5Stack Tab5**, every screen version (the radio detects which one), with or without the
   **Tab5 Keyboard**: files named `SimplrRadio-Tab5-v<version>-...`. The Tab5 runs it in
   landscape, on the full 1280x720 screen.
-- **Waveshare ESP32-P4-WIFI6-Touch-LCD-4B** (720x720): files named
-  `SimplrRadio-Waveshare-v<version>-...`. Text is typed on the on-screen keyboard.
+- **LilyGO T-Deck / T-Deck Plus** (320x240 touch screen, keyboard and trackball): files named
+  `SimplrRadio-TDeck-v<version>-...`. The sound comes from its built-in speaker.
 
 Each device has its own files; the other's won't start. No other boards are supported. You
 also need a USB-C cable to install, and a 2.4 GHz WiFi network with internet access.
 
-SimplrRadio is new and has not been tested on a Tab5 or a Waveshare board yet: please report
-what you find.
+SimplrRadio is new: please report what you find on your device.
 
 ## Install
 
@@ -33,8 +32,8 @@ Download the latest firmware from the [**Releases**](../../releases) page.
 **If your device runs a launcher** (such as [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher),
 the M5 Launcher):
 
-1. Copy `SimplrRadio-Tab5-v<version>-launcher.bin` (Waveshare:
-   `SimplrRadio-Waveshare-v<version>-launcher.bin`) to the SD card.
+1. Copy `SimplrRadio-Tab5-v<version>-launcher.bin` (T-Deck:
+   `SimplrRadio-TDeck-v<version>-launcher.bin`) to the SD card.
 2. In the launcher, open the SD card and install the file.
 
 Nothing is written at `0x0`: the launcher stays, and keeps the radio's settings when you
@@ -42,19 +41,16 @@ install a newer version the same way.
 
 **Otherwise, flash from your browser** (Chrome or Edge):
 
-1. Connect the device over USB (Waveshare: the port labelled UART).
+1. Connect the device over USB-C.
 2. Open https://espressif.github.io/esptool-js/, click **Connect** and pick the device's port.
-3. Add `SimplrRadio-Tab5-v<version>-release.bin` (Waveshare:
-   `SimplrRadio-Waveshare-v<version>-release.bin`) at address **`0x0`** and click **Program**.
-4. Press the reset button when it finishes.
+3. Add `SimplrRadio-Tab5-v<version>-release.bin` (T-Deck:
+   `SimplrRadio-TDeck-v<version>-release.bin`) at address **`0x0`** and click **Program**.
+4. Restart the device when it finishes.
 
-For a Tab5, hold its reset button for about 2 seconds, until the green LED flashes quickly,
-to put it in download mode.
+To put it in download mode: on a Tab5, hold its reset button for about 2 seconds, until the
+green LED flashes quickly; on a T-Deck, hold the trackball down while switching it on.
 
 **To update**, install the newer file the same way. Your settings are kept. Avoid "Erase flash".
-
-**The first start takes about 30 seconds**: the radio updates the firmware of its WiFi chip
-(an ESP32-C6, which usually ships with old firmware). Later starts skip it.
 
 **Coming from esp32-p4-webradio 1.x?** Its setup network (`P4-Radio-Setup`) is gone: set
 WiFi up on the screen as below. Settings from 1.x aren't carried over.
@@ -64,18 +60,20 @@ WiFi up on the screen as below. Settings from 1.x aren't carried over.
 The radio starts by joining WiFi, then plays. The bar at the top shows the page's title and,
 on the right, the volume and a WiFi icon (red while WiFi is off). Every menu is a list of rows:
 
-- **Tab5 Keyboard**: Up / Down to move, Enter to open.
+- **Tab5 Keyboard**: Up / Down to move, Enter (or Right) to open.
+- **T-Deck**: roll the trackball up / down to move, press it (or roll right) to open.
 - **Touch**: tap a row. Drag to scroll a long page.
-- **Both**: type a row's number (it opens as soon as no longer number could match; otherwise
-  press Enter).
+- **Keyboards**: type a row's number (it opens as soon as no longer number could match;
+  otherwise press Enter).
 
-To go back one level, pick **0 Back**, tap the arrow in the title bar or press **Esc**;
-**Ctrl+Del** returns to Now Playing from anywhere. While a step works (scanning, connecting,
-loading stations) its progress shows on the page. When a step asks a question, type the
-answer into the field under it and press Enter (or the on-screen keyboard's check mark).
+To go back one level, pick **0 Back**, tap the arrow in the title bar, roll left, press
+**Esc** (Tab5) or **hold the trackball** (T-Deck); **Ctrl+Del** (Tab5) returns to Now Playing
+from anywhere. While a step works (scanning, connecting, loading stations) its progress shows
+on the page. When a step asks a question, type the answer into the field under it and press
+Enter (or the on-screen keyboard's check mark).
 
 1. **WiFi**: on the first start the radio shows the networks around it, strongest first. Pick
-   yours and type the password (**Tab** or **Show** reveals what you typed). It is saved and
+   yours and type the password (**Show**, or **Tab** on the Tab5, reveals it). It is saved and
    the radio plays. From then on it joins the strongest saved network in range by itself,
    after a restart too, and reconnects if WiFi drops. *Hidden network...* at the end of the
    list takes a network's name. If the network has a sign-in page (cafe, hotel, airport), see
@@ -99,10 +97,10 @@ Saved WiFi passwords are encrypted on the device.
   number, bitrate and genre, and a live spectrum. The buttons along the bottom: **Menu**,
   previous, mute, next, volume down / up, **Stations**.
 - **Change station**: the previous / next buttons, swipe left / right, Left / Right on the
-  keyboard, or pick one from **Stations**. Type a station's number and Enter to jump to it.
-  Paging quickly through stations only starts the one you stop on.
-- **Volume**: the buttons, swipe up / down, or Up / Down on the keyboard. Mute with the button
-  or Space / M. The volume and the last station are remembered.
+  keyboard or trackball, or pick one from **Stations**. Type a station's number and Enter to
+  jump to it. Paging quickly through stations only starts the one you stop on.
+- **Volume**: the buttons, swipe up / down, or Up / Down on the keyboard or trackball. Mute
+  with the button or Space / M. The volume and the last station are remembered.
 - **Headphones** (Tab5): plugging them in turns the speaker off and adds a little bass;
   unplugging turns it back on. Mute silences both.
 - **A station that won't play** (some only stream to their own region) shows *unavailable*:
@@ -137,6 +135,21 @@ Saved WiFi passwords are encrypted on the device.
 Held keys repeat. The keyboard can be attached or removed while the radio runs; without it,
 the on-screen keyboard appears when there's something to type.
 
+### T-Deck keyboard and trackball
+
+| Input | Does |
+|---|---|
+| Trackball left / right | Previous / next station; back a level / open a row in a menu (in a text field: move the cursor) |
+| Trackball up / down | Volume up / down; move the highlight in a menu |
+| Press the trackball | Station list; open the highlighted row; Enter in a text field |
+| Hold the trackball | Menu; back one level (the T-Deck's Esc) |
+| Space or M | Mute / unmute |
+| A number, then Enter | Go to that station (in a menu: open that row) |
+| S / W | Station list / WiFi |
+| Backspace | Delete a character; back one level in a menu |
+
+Passwords are shown with the **Show** button next to the field.
+
 ## Troubleshooting
 
 - **WiFi won't connect**: make sure the network is 2.4 GHz and shows up in the scan. The
@@ -147,35 +160,36 @@ the on-screen keyboard appears when there's something to type.
   page needs JavaScript; sign in on a phone and use its hotspot.
 - **"The station list couldn't be loaded"**: no internet yet, or the station directory is
   busy; the radio tries again by itself, waiting longer each time.
-- **The WiFi chip isn't responding** at start: choose **Try again**, or restart the radio.
-  The first start after installing takes about 30 seconds while the WiFi chip updates.
-- **Black screen on a Tab5**: this version supports every Tab5 screen; if yours stays dark,
-  please report it with the serial log (115200 baud).
+- **"WiFi didn't start"**: choose **Try again**, or restart the radio.
+- **Black screen**: the Tab5 starts its screen and WiFi the way SimplrSSH's Tab5 firmware does, on every
+  Tab5 screen version. If yours stays dark, please report it with the serial log (USB-C,
+  115200 baud).
 
 ## Credits
 
 - **[David M. King (@dmatking)](https://github.com/dmatking)** wrote
   [esp32-p4-webradio](https://github.com/dmatking/esp32-p4-webradio), which this is a fork of:
-  the HTTP/ICY streaming, the MP3 decode path, the 32-band spectrum analyzer, the
-  ES8311/ES8388 audio with the Tab5's EQ and headphone detection, the Waveshare board
-  bring-up, the Radio Browser client and the ESP32-C6 firmware update over esp_hosted.
-  MIT license.
+  the HTTP/ICY streaming, the MP3 decode path, the 32-band spectrum analyzer, the ES8388
+  audio with the Tab5's EQ and headphone detection, the first Tab5 bring-up and the Radio
+  Browser client. MIT license.
 - **[SimplrSSH](https://github.com/MicroHealthLLC/SimplrSSH)** (MicroHealth, MIT), itself a
   fork of [PocketSSH](https://github.com/0015/PocketSSH) by [Eric (@0015)](https://github.com/0015):
   the page UI, the sign-in page (captive portal) parser and client, the encrypted vault, the
-  settings partition for launchers, the Tab5 Keyboard driver and key map, the Tab5 power-up,
+  settings partition for launchers, the Tab5 Keyboard driver and key map, the Tab5 power-up
+  and WiFi co-processor link, the T-Deck board support (display, touch, keyboard, trackball),
   and the test and CI setup.
 - **[Radio Browser](https://www.radio-browser.info/)**: the free, community-run station
   directory. Please consider supporting it.
 - **[Espressif](https://github.com/espressif)**: ESP-IDF, esp_hosted and esp_wifi_remote,
   the `m5stack_tab5` board support package (which tells the Tab5's screens apart),
-  esp_lvgl_port, esp-dsp, esp_codec_dev and the ST7703 panel driver in `components/`
+  `esp_bsp_generic` (the T-Deck's display), esp_lvgl_port, esp-dsp and esp_codec_dev
   (Apache-2.0).
 - **[LVGL](https://lvgl.io/)** (MIT): the graphics library behind every screen.
 - **[esp-libhelix-mp3](https://github.com/chmorgan/esp-libhelix-mp3)** by Chris Morgan: the
   Helix MP3 decoder (RealNetworks) packaged for ESP-IDF.
 - **[M5Stack](https://m5stack.com/)**: the Tab5, its keyboard, and the keyboard firmware's
   register protocol.
+- **[LilyGO](https://lilygo.cc/)**: the T-Deck and its pin map.
 - **[bmorcelli/Launcher](https://github.com/bmorcelli/Launcher)**: the launcher the
   `-launcher.bin` images are made for.
 
@@ -183,7 +197,7 @@ the on-screen keyboard appears when there's something to type.
 
 - Security details and how to report a vulnerability are in [SECURITY.md](SECURITY.md).
 - To build it yourself you need ESP-IDF v5.5.1: `BOARD=tab5 idf.py -B build-tab5 build`
-  (or `BOARD=waveshare`, `build-waveshare`), then
+  (or `BOARD=tdeck`, `build-tdeck`), then
   `idf.py -B build-tab5 merge-bin -o SimplrRadio-Tab5-v<version>-release.bin` and
   `idf.py -B build-tab5 launcher-bin`. Details in [BUILDING.md](BUILDING.md).
 - Every push and pull request runs the **Tests** checks (`.github/workflows/tests.yml`). To run

@@ -3,7 +3,7 @@
 Report outdated dependencies (report only, never fails the build).
 
 Compares the versions pinned in each board's lock file (dependencies.lock.tab5 for the M5Stack
-Tab5, dependencies.lock.waveshare for the Waveshare board) / main/idf_component.<board>.yml against
+Tab5, dependencies.lock.tdeck for the LilyGO T-Deck) / main/idf_component.<board>.yml against
 the latest releases on the ESP Component Registry, and the ESP-IDF version used by
 CI against the latest ESP-IDF release on GitHub. Writes a Markdown table to
 $GITHUB_STEP_SUMMARY (or stdout) and a GitHub warning annotation per outdated item.
@@ -64,7 +64,7 @@ def ci_idf_version():
         return None
 
 
-LOCK_FILES = ("dependencies.lock.tab5", "dependencies.lock.waveshare")
+LOCK_FILES = ("dependencies.lock.tab5", "dependencies.lock.tdeck")
 
 
 def locked_components():
@@ -86,7 +86,7 @@ def locked_components():
 
 def main():
     direct = set()
-    for board in ("tab5", "waveshare"):
+    for board in ("tab5", "tdeck"):
         with open(os.path.join("main", f"idf_component.{board}.yml")) as f:
             direct |= set(yaml.safe_load(f).get("dependencies", {}))
     rows = []

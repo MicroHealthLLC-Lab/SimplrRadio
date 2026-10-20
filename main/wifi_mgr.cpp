@@ -8,10 +8,9 @@
  */
 
 #include "wifi_mgr.hpp"
+#include "board.h"
 #include "secret_vault.hpp"
 #include "settings_nvs.hpp"
-#include "slave_ota.h"
-#include "esp_hosted.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -112,6 +111,7 @@ static esp_err_t store_saved()
         }
         buf[off] = (n.has_password ? 1 : 0) | (n.hidden ? 2 : 0);
         buf[off + 1] = (uint8_t)n.ssid.size();
+        // noopengrep: mh.gitlab.c_buffer_rule-memcpy-CopyMemory - at most MAX_SAVED entries of 2 + 32 bytes (longer SSIDs skipped above), the size buf has
         memcpy(buf + off + 2, n.ssid.data(), n.ssid.size());
         off += 2 + n.ssid.size();
         count++;
@@ -236,7 +236,7 @@ static void on_event(void* arg, esp_event_base_t base, int32_t id, void* data)
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t* ev = (const wifi_event_sta_disconnected_t*)data;
         if (s_state == State::Connecting && ev && ev->ssid_len &&
-            (ev->ssid_len != strlen(s_target) || memcmp(ev->ssid, s_target, ev->ssid_len) != 0)) {
+            (ev->ssid_len != strnlen(s_target, sizeof(s_target)) || memcmp(ev->ssid, s_target, ev->ssid_len) != 0)) {
             return;   // A late event from the network left before this attempt
         }
         s_last_reason = ev ? ev->reason : 0;
@@ -255,7 +255,7 @@ static void on_event(void* arg, esp_event_base_t base, int32_t id, void* data)
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t* ev = (const ip_event_got_ip_t*)data;
         char ip[16];
-        snprintf(ip, sizeof(ip), IPSTR, IP2STR(&ev->ip_info.ip));
+        esp_ip4addr_ntoa(&ev->ip_info.ip, ip, sizeof(ip));
         wifi_config_t cfg = {};
         esp_wifi_get_config(WIFI_IF_STA, &cfg);
         std::string ssid((const char*)cfg.sta.ssid, strnlen((const char*)cfg.sta.ssid, sizeof(cfg.sta.ssid)));
@@ -267,16 +267,6 @@ static void on_event(void* arg, esp_event_base_t base, int32_t id, void* data)
     }
 }
 
-static wifi::progress_cb_t s_progress;   // Only while start() runs
-
-static void ota_progress(int percent)
-{
-    if (s_progress) {
-        char text[64];
-        snprintf(text, sizeof(text), "Updating the WiFi chip (first start only): %d%%", percent);
-        s_progress(text);
-    }
-}
 
 esp_err_t wifi::start(progress_cb_t progress)
 {
@@ -289,16 +279,13 @@ esp_err_t wifi::start(progress_cb_t progress)
     if (progress) {
         progress("Starting WiFi...");
     }
-    // esp_hosted set up its SDIO transport before app_main; the C6 is powered by now
-    if (esp_hosted_connect_to_slave() != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi co-processor not responding");
-        return ESP_FAIL;
+    // Tab5: the link to the WiFi co-processor; T-Deck: nothing
+    esp_err_t err = board_wifi_prepare();
+    if (err != ESP_OK) {
+        return err;
     }
-    s_progress = progress;
-    slave_ota_update_if_needed(ota_progress);
-    s_progress = NULL;
 
-    esp_err_t err = esp_netif_init();
+    err = esp_netif_init();
     if (err == ESP_OK) {
         err = esp_event_loop_create_default();
         if (err == ESP_ERR_INVALID_STATE) {
@@ -317,8 +304,8 @@ esp_err_t wifi::start(progress_cb_t progress)
         ESP_LOGE(TAG, "WiFi init failed: %s", esp_err_to_name(err));
         return err;
     }
-    // Networks are saved by the radio (passwords in the vault): the co-processor must not keep
-    // its own plain-text copy in its flash
+    // Networks are saved by the radio (passwords in the vault): the driver (on the Tab5, the
+    // co-processor) must not keep its own plain-text copy in flash
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
     static bool handlers;   // Once, even if "Try again" runs start() after a failed start
     if (!handlers) {
@@ -444,9 +431,10 @@ esp_err_t wifi::connect(const std::string& ssid, const std::string& password, st
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 
+    // Lengths were checked above (SSID 1-32, password empty or 8-63); clamped to the fields anyway
     wifi_config_t cfg = {};
-    memcpy(cfg.sta.ssid, ssid.data(), ssid.size());
-    memcpy(cfg.sta.password, password.data(), password.size());
+    std::copy_n(ssid.begin(), std::min(ssid.size(), sizeof(cfg.sta.ssid)), cfg.sta.ssid);
+    std::copy_n(password.begin(), std::min(password.size(), sizeof(cfg.sta.password) - 1), cfg.sta.password);
     // A password means WPA2 or better: an impostor offering WEP/WPA1/open is refused.
     // WPA3 (SAE) networks are joined too; management frames are protected when the AP can.
     cfg.sta.threshold.authmode = password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;

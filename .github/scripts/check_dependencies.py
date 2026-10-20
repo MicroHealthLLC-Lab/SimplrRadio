@@ -3,7 +3,7 @@
 Lockfile check for the Tests workflow's install job (from SimplrSSH's). Run after
 `idf.py reconfigure` on a clean checkout in the pinned ESP-IDF image:
 
-  check_dependencies.py --board tab5|waveshare <reconfigure.log> <committed-lock> <committed-sdkconfig>
+  check_dependencies.py --board tab5|tdeck <reconfigure.log> <committed-lock> <committed-sdkconfig>
                         <generated-sdkconfig>
 
 (reconfigure rewrites the lock and sdkconfig, so pass copies taken before it ran). Each board
@@ -18,11 +18,13 @@ Fails (exit 1) when
   - a setting in the defaults does not take effect in the generated sdkconfig.
 
 ESP-IDF v5.5.1's component manager re-solves dependencies in a second, Kconfig-aware pass on a
-clean build directory (LVGL 9.6's manifest has Kconfig conditions) and can replace locked
-components with newer ones (SimplrSSH's LVGL 9.4.0 became 9.6.0~1). This project pins every
-component with == and LVGL at 9.6.0~1, so both passes agree: KNOWN_DRIFT stays empty, and any
-drift is a failure instead of a silent firmware change. (The second pass also rewrites the lock
-with local paths; scripts/update-lock.sh keeps the first pass's.)
+clean build directory (some manifests have Kconfig conditions). That pass lists requirements it
+does not install (SimplrSSH's Tab5 log shows "lvgl/lvgl (9.6.0~1)" beside the 9.4.0 in
+managed_components/, which is what compiles) and rewrites the lock with local paths
+(scripts/update-lock.sh keeps the first pass's). This project pins every component with ==,
+so the first pass installs exactly the lock; what the second pass lifts is pinned too where the
+first pass allows it, and otherwise reviewed in the board's KNOWN_DRIFT. Any other drift in what
+managed_components/ holds is a failure instead of a silent firmware change.
 """
 
 import glob
@@ -30,11 +32,17 @@ import os
 import re
 import sys
 
-# component: (locked version, version the build actually compiles today), per board
+# component: (locked version, version the build actually compiles today), per board. Each entry
+# is reviewed; anything else that drifts fails.
 KNOWN_DRIFT = {}
+# T-Deck: the first pass needs cmake_utilities 0.x for esp_lcd_ili9341 (an esp_bsp_generic
+# dependency); the second pass drops that driver (the T-Deck's panel is an ST7789) and lifts
+# cmake_utilities, a CMake helper with no firmware code, to 1.1.1. It can't be pinned in the
+# manifest without breaking the first pass.
+KNOWN_DRIFT_TDECK = {"espressif/cmake_utilities": ("0.5.3", "1.1.1")}
 BOARDS = {
     "tab5": (KNOWN_DRIFT, ["sdkconfig.defaults", "sdkconfig.defaults.tab5"]),
-    "waveshare": (KNOWN_DRIFT, ["sdkconfig.defaults", "sdkconfig.defaults.waveshare"]),
+    "tdeck": (KNOWN_DRIFT_TDECK, ["sdkconfig.defaults", "sdkconfig.defaults.tdeck"]),
 }
 
 
