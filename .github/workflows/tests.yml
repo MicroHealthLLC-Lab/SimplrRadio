@@ -50,13 +50,14 @@ on:
   workflow_dispatch:
 
 # Superseded runs of pull requests and of pushes to feature branches are cancelled to save
-# minutes. Pushes to main and integration are never cancelled and each commit has its own
-# group: the release pipeline waits for exactly that run.
+# minutes. Pushes to main and integration are never cancelled and each branch's commit has its
+# own group (the same commit pushed to both, e.g. integration fast-forwarded to main, runs on
+# both): the release pipeline waits for the runs of exactly that commit.
 concurrency:
   group: >-
-    tests-${{ github.event_name }}-${{
+    tests-${{ github.event_name }}-${{ github.ref }}-${{
     (github.event_name == 'pull_request' || (github.ref != 'refs/heads/main' && github.ref != 'refs/heads/integration'))
-    && github.ref || github.sha }}
+    && 'latest' || github.sha }}
   cancel-in-progress: >-
     ${{ github.event_name == 'pull_request' ||
     (github.ref != 'refs/heads/main' && github.ref != 'refs/heads/integration') }}
