@@ -1,7 +1,0 @@
-menu "P4 Radio"
-
-config WIFI_TZ
-    string "POSIX timezone string"
-    default "CST6CDT,M3.2.0,M11.1.0"
-
-endmenu

@@ -1,157 +1,148 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Keeps the ESP32-C6 WiFi co-processor's firmware current. Boards ship with old esp_hosted
+// firmware; the matching image (slave_fw/network_adapter.bin) is embedded in this app, so it
+// arrives with every install (flasher or launcher) and is covered by the app image's own
+// checksum. If the C6 reports a different version, the image is checked and sent over SDIO.
+
 #include "slave_ota.h"
 #include "esp_log.h"
-#include "esp_partition.h"
 #include "esp_hosted.h"
 #include "esp_hosted_ota.h"
 #include "esp_app_format.h"
 #include "esp_app_desc.h"
+#include "mbedtls/sha256.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <inttypes.h>
 
 static const char *TAG = "slave_ota";
 
 #define CHUNK_SIZE 1500
-#define SLAVE_FW_PARTITION "slave_fw"
 
-esp_err_t slave_ota_update_if_needed(void)
+extern const uint8_t c6_fw_start[] asm("_binary_network_adapter_bin_start");
+extern const uint8_t c6_fw_end[] asm("_binary_network_adapter_bin_end");
+
+static char s_version[24] = "unknown";
+
+const char *slave_ota_version(void)
 {
-    // Get current co-processor firmware version
-    esp_hosted_coprocessor_fwver_t ver = {0};
-    esp_err_t ver_ret = esp_hosted_get_coprocessor_fwversion(&ver);
-    esp_err_t ret;
-    if (ver_ret != ESP_OK) {
-        ESP_LOGW(TAG, "Cannot get co-processor version: %s", esp_err_to_name(ver_ret));
-        // Proceed anyway -- old firmware may not support the version query
-    } else {
-        ESP_LOGI(TAG, "Co-processor firmware: %" PRIu32 ".%" PRIu32 ".%" PRIu32,
-                 ver.major1, ver.minor1, ver.patch1);
-    }
+    return s_version;
+}
 
-    // Find the slave firmware partition
-    const esp_partition_t *part = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, SLAVE_FW_PARTITION);
-    if (!part) {
-        ESP_LOGW(TAG, "No '%s' partition found, skipping OTA", SLAVE_FW_PARTITION);
-        return ESP_OK;
+// The image's real length (header, segments, padding, checksum, optional SHA-256) and its
+// version, after checking that it is a well-formed ESP image whose appended hash matches
+static bool check_image(size_t *out_len, char *version, size_t version_len)
+{
+    // Both symbols bound the one blob the linker embedded (target_add_binary_data)
+    // cppcheck-suppress comparePointers
+    size_t avail = (size_t)(c6_fw_end - c6_fw_start);
+    esp_image_header_t hdr;
+    if (avail < sizeof(hdr)) {
+        return false;
     }
-
-    // Check if partition has data (not all 0xFF)
-    uint8_t hdr[4];
-    ret = esp_partition_read(part, 0, hdr, sizeof(hdr));
-    if (ret != ESP_OK || (hdr[0] == 0xFF && hdr[1] == 0xFF && hdr[2] == 0xFF && hdr[3] == 0xFF)) {
-        ESP_LOGW(TAG, "Partition '%s' appears empty, skipping OTA", SLAVE_FW_PARTITION);
-        return ESP_OK;
+    memcpy(&hdr, c6_fw_start, sizeof(hdr));
+    if (hdr.magic != ESP_IMAGE_HEADER_MAGIC || hdr.segment_count == 0 || hdr.segment_count > ESP_IMAGE_MAX_SEGMENTS) {
+        return false;
     }
-
-    // Read image header to get firmware size
-    esp_image_header_t img_hdr;
-    ret = esp_partition_read(part, 0, &img_hdr, sizeof(img_hdr));
-    if (ret != ESP_OK || img_hdr.magic != ESP_IMAGE_HEADER_MAGIC) {
-        ESP_LOGW(TAG, "Invalid firmware image in '%s', skipping OTA", SLAVE_FW_PARTITION);
-        return ESP_OK;
-    }
-
-    // Read app descriptor to get version string
-    char new_ver[32] = "unknown";
-    if (img_hdr.segment_count > 0) {
-        esp_app_desc_t app_desc;
-        size_t desc_off = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
-        if (esp_partition_read(part, desc_off, &app_desc, sizeof(app_desc)) == ESP_OK) {
-            strncpy(new_ver, app_desc.version, sizeof(new_ver) - 1);
-            new_ver[sizeof(new_ver) - 1] = '\0';
-        }
-    }
-
-    // Check if versions match
-    if (ver_ret == ESP_OK && ver.major1 != 0) {
-        char cur_ver[32];
-        snprintf(cur_ver, sizeof(cur_ver), "%" PRIu32 ".%" PRIu32 ".%" PRIu32,
-                 ver.major1, ver.minor1, ver.patch1);
-        if (strcmp(cur_ver, new_ver) == 0) {
-            ESP_LOGI(TAG, "Co-processor already at %s, no update needed", cur_ver);
-            return ESP_OK;
-        }
-        ESP_LOGI(TAG, "Updating co-processor: %s -> %s", cur_ver, new_ver);
-    } else {
-        ESP_LOGI(TAG, "Updating co-processor to %s", new_ver);
-    }
-
-    // Calculate total firmware size by walking segments
-    size_t fw_size = sizeof(esp_image_header_t);
-    size_t offset = sizeof(esp_image_header_t);
-    for (int i = 0; i < img_hdr.segment_count; i++) {
+    size_t off = sizeof(hdr);
+    for (int i = 0; i < hdr.segment_count; i++) {
         esp_image_segment_header_t seg;
-        ret = esp_partition_read(part, offset, &seg, sizeof(seg));
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to read segment %d", i);
-            return ESP_FAIL;
+        if (off + sizeof(seg) > avail) {
+            return false;
         }
-        fw_size += sizeof(seg) + seg.data_len;
-        offset += sizeof(seg) + seg.data_len;
+        memcpy(&seg, c6_fw_start + off, sizeof(seg));
+        if (i == 0 && seg.data_len >= sizeof(esp_app_desc_t) && off + sizeof(seg) + sizeof(esp_app_desc_t) <= avail) {
+            esp_app_desc_t desc;
+            memcpy(&desc, c6_fw_start + off + sizeof(seg), sizeof(desc));
+            if (desc.magic_word == ESP_APP_DESC_MAGIC_WORD) {
+                snprintf(version, version_len, "%.*s", (int)sizeof(desc.version), desc.version);
+            }
+        }
+        off += sizeof(seg) + seg.data_len;
+        if (off > avail) {
+            return false;
+        }
     }
-    // Padding to 16-byte alignment + checksum byte
-    size_t pad = (16 - (fw_size % 16)) % 16;
-    fw_size += pad + 1;
-    // SHA256 hash if appended
-    if (img_hdr.hash_appended)
-        fw_size += 32;
+    off = (off + 1 + 15) & ~(size_t)15;   // The checksum byte, then padding to 16 bytes
 
-    ESP_LOGI(TAG, "Firmware size: %u bytes", (unsigned)fw_size);
+    if (hdr.hash_appended) {
+        if (off + 32 > avail) {
+            return false;
+        }
+        uint8_t digest[32];
+        mbedtls_sha256(c6_fw_start, off, digest, 0);
+        if (memcmp(digest, c6_fw_start + off, sizeof(digest)) != 0) {
+            ESP_LOGE(TAG, "Embedded C6 image fails its SHA-256 check");
+            return false;
+        }
+        off += 32;
+    }
+    *out_len = off;
+    return off <= avail;
+}
 
-    // Perform OTA
-    ret = esp_hosted_slave_ota_begin();
+esp_err_t slave_ota_update_if_needed(slave_ota_progress_cb_t progress)
+{
+    esp_hosted_coprocessor_fwver_t ver = {0};
+    bool have_ver = esp_hosted_get_coprocessor_fwversion(&ver) == ESP_OK;
+    if (have_ver) {
+        snprintf(s_version, sizeof(s_version), "%" PRIu32 ".%" PRIu32 ".%" PRIu32,
+                 ver.major1, ver.minor1, ver.patch1);
+        ESP_LOGI(TAG, "Co-processor firmware %s", s_version);
+    } else {
+        ESP_LOGW(TAG, "Co-processor version unknown (old firmware)");
+    }
+
+    size_t fw_len = 0;
+    char new_ver[32] = "";
+    if (!check_image(&fw_len, new_ver, sizeof(new_ver))) {
+        ESP_LOGE(TAG, "Embedded C6 firmware unusable; not updating");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (have_ver && ver.major1 != 0 && strcmp(s_version, new_ver) == 0) {
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "Updating co-processor %s -> %s (%u bytes)", s_version, new_ver, (unsigned)fw_len);
+
+    esp_err_t ret = esp_hosted_slave_ota_begin();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "OTA begin failed: %s", esp_err_to_name(ret));
         return ret;
     }
-
-    uint8_t chunk[CHUNK_SIZE];
-    offset = 0;
-    while (offset < fw_size) {
-        size_t to_read = (fw_size - offset > CHUNK_SIZE) ? CHUNK_SIZE : (fw_size - offset);
-        ret = esp_partition_read(part, offset, chunk, to_read);
+    int last_pct = -1;
+    for (size_t off = 0; off < fw_len; off += CHUNK_SIZE) {
+        size_t n = fw_len - off > CHUNK_SIZE ? CHUNK_SIZE : fw_len - off;
+        ret = esp_hosted_slave_ota_write((uint8_t *)(c6_fw_start + off), n);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Partition read failed at offset %u", (unsigned)offset);
+            ESP_LOGE(TAG, "OTA write failed at %u", (unsigned)off);
             esp_hosted_slave_ota_end();
             return ret;
         }
-        ret = esp_hosted_slave_ota_write(chunk, to_read);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "OTA write failed at offset %u", (unsigned)offset);
-            esp_hosted_slave_ota_end();
-            return ret;
+        int pct = (int)((off + n) * 100 / fw_len);
+        if (progress && pct != last_pct && pct % 5 == 0) {
+            progress(pct);
         }
-        offset += to_read;
-        if ((offset * 100 / fw_size) % 25 == 0 && offset > 0) {
-            ESP_LOGI(TAG, "OTA progress: %u%%", (unsigned)(offset * 100 / fw_size));
-        }
+        last_pct = pct;
     }
-
     ret = esp_hosted_slave_ota_end();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "OTA end failed: %s", esp_err_to_name(ret));
         return ret;
     }
-
-    ESP_LOGI(TAG, "OTA complete, activating new firmware...");
-    ret = esp_hosted_slave_ota_activate();
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "OTA activate returned %s (may not be supported on old FW)", esp_err_to_name(ret));
-        // Old firmware may not support activate -- the OTA end should suffice
+    if (esp_hosted_slave_ota_activate() != ESP_OK) {
+        ESP_LOGW(TAG, "OTA activate not supported by the old firmware; it reboots anyway");
     }
 
-    // The C6 will reboot. Give it time to come back up.
-    ESP_LOGI(TAG, "Co-processor rebooting with new firmware...");
+    // The C6 reboots into the new firmware; give it time, then link up again
     vTaskDelay(pdMS_TO_TICKS(5000));
-
-    // Re-establish hosted connection
-    ESP_LOGI(TAG, "Reconnecting to co-processor...");
     ret = esp_hosted_connect_to_slave();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to reconnect after OTA: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Reconnect after OTA failed: %s", esp_err_to_name(ret));
         return ret;
     }
-
-    ESP_LOGI(TAG, "Co-processor updated successfully!");
+    snprintf(s_version, sizeof(s_version), "%s", new_ver);
+    ESP_LOGI(TAG, "Co-processor updated to %s", new_ver);
     return ESP_OK;
 }

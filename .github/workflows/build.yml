@@ -1,0 +1,271 @@
+# Builds the firmware for both boards from the same sources and packages each as two images
+# (the same pipeline as SimplrSSH's):
+#   M5Stack Tab5 (ESP32-P4):
+#   - SimplrRadio-Tab5-v<version>-release.bin, to flash at offset 0x0 (16 MB)
+#   - SimplrRadio-Tab5-v<version>-launcher.bin, to install with a launcher such as
+#     bmorcelli/Launcher (M5 Launcher): same app, partitions_launcher.csv with the settings partition
+#   Waveshare ESP32-P4-WIFI6-Touch-LCD-4B:
+#   - SimplrRadio-Waveshare-v<version>-release.bin (0x0) and SimplrRadio-Waveshare-v<version>-launcher.bin
+#
+# Versions and releases (see .github/scripts/plan_release.py):
+#   - Every push to main publishes a release, auto-incrementing the patch number from
+#     the latest vX.Y.Z tag (v2.0.0 -> v2.0.1 -> v2.0.2 ...).
+#   - "Run workflow" (manual) lets you pick the branch (main or integration), the bump
+#     (patch by default, minor, major) or an exact version. Releases from integration
+#     are marked as pre-releases.
+#   - Pushing a tag vX.Y.Z releases exactly that version.
+#   - Pushes to other branches and pull requests only build ("<next>-dev.<sha>").
+#   - A release waits for the Tests run (tests.yml) of the same commit and is not published
+#     unless it passed (.github/scripts/wait-for-tests.sh).
+name: Build firmware
+
+on:
+  push:
+    branches: [main, integration]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to build and release
+        type: choice
+        options: [main, integration]
+        default: main
+      bump:
+        description: Version bump (ignored if a version is given)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Exact version, e.g. 2.1.0 (optional - leave empty to auto-increment)
+        type: string
+        required: false
+
+env:
+  ESP_IDF_VERSION: v5.5.1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Runs that can release (main, tags, manual) are serialized so two of them never pick
+    # the same version; other builds are grouped per branch / pull request
+    concurrency:
+      group: >-
+        build-${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/tags/')) && 'release' || github.ref }}
+      cancel-in-progress: false
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      release: ${{ steps.plan.outputs.release }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || '' }}
+
+      - name: Plan version and release
+        id: plan
+        env:
+          INPUT_BRANCH: ${{ inputs.branch }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          python3 .github/scripts/plan_release.py
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Pull ESP-IDF image (retries transient registry errors)
+        run: |
+          for attempt in 1 2 3 4; do
+            docker pull espressif/idf:v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884 && exit 0
+            echo "Pull failed (attempt $attempt), retrying..."
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Build and merge Tab5 images (ESP-IDF ${{ env.ESP_IDF_VERSION }})
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884  # espressif/idf:v5.5.1 pinned by digest
+          target: esp32p4
+          # The version shown on the device and in the image names; the board
+          extra_docker_args: -e FIRMWARE_VERSION=${{ steps.plan.outputs.version }} -e BOARD=tab5
+          # The action wraps this in bash -c '...', so it must not contain single quotes
+          command: >-
+            set -o pipefail &&
+            idf.py -B build-tab5 build 2>&1 | tee build-output-tab5.log &&
+            idf.py -B build-tab5 merge-bin -o SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin &&
+            idf.py -B build-tab5 launcher-bin &&
+            cd build-tab5 &&
+            sha256sum SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin > SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
+            sha256sum SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin > SimplrRadio-Tab5-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
+
+      # The Waveshare from an empty managed_components/ (the boards' components differ), into
+      # build-waveshare/
+      - name: Build and merge Waveshare images (ESP-IDF ${{ env.ESP_IDF_VERSION }})
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884  # espressif/idf:v5.5.1 pinned by digest
+          target: esp32p4
+          extra_docker_args: -e FIRMWARE_VERSION=${{ steps.plan.outputs.version }} -e BOARD=waveshare
+          # The action wraps this in bash -c '...', so it must not contain single quotes
+          command: >-
+            set -o pipefail &&
+            rm -rf managed_components &&
+            idf.py -B build-waveshare build 2>&1 | tee build-output-waveshare.log &&
+            idf.py -B build-waveshare merge-bin -o SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin &&
+            idf.py -B build-waveshare launcher-bin &&
+            cd build-waveshare &&
+            sha256sum SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin > SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-release.bin.sha256 &&
+            sha256sum SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin > SimplrRadio-Waveshare-v${{ steps.plan.outputs.version }}-launcher.bin.sha256
+
+      - name: Collect images
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp build-tab5/SimplrRadio-Tab5-v"$VERSION"-*.bin build-tab5/SimplrRadio-Tab5-v"$VERSION"-*.bin.sha256 dist/
+          cp build-waveshare/SimplrRadio-Waveshare-v"$VERSION"-*.bin build-waveshare/SimplrRadio-Waveshare-v"$VERSION"-*.bin.sha256 dist/
+          ls -la dist
+
+      - name: Summarize
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          RELEASE: ${{ steps.plan.outputs.release }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+        run: |
+          {
+            echo "## SimplrRadio v$VERSION"
+            echo ""
+            echo "| File | Size | Install | SHA-256 |"
+            echo "|---|---|---|---|"
+            for f in dist/*.bin; do
+              case "$f" in
+                *-launcher.bin) how="with a launcher (Bmorcelli Launcher / M5 Launcher)" ;;
+                *) how="flash at \`0x0\` (ESP32-P4, 16 MB)" ;;
+              esac
+              echo "| \`$(basename "$f")\` | $(stat -c %s "$f") bytes | $how | \`$(cut -d' ' -f1 "$f.sha256")\` |"
+            done
+            echo ""
+            if [ "$RELEASE" = "true" ]; then
+              kind=$([ "$PRERELEASE" = "true" ] && echo "pre-release" || echo "release")
+              echo "Publishing **v$VERSION** as a $kind (see the release job)."
+            else
+              echo "Build only - no release for this event."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report compiler warnings (non-blocking)
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 .github/scripts/report_warnings.py build-output-tab5.log
+          python3 .github/scripts/report_warnings.py build-output-waveshare.log
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SimplrRadio-v${{ steps.plan.outputs.version }}
+          path: |
+            dist/*.bin
+            dist/*.bin.sha256
+            build-tab5/SimplrRadio.bin
+            build-tab5/bootloader/bootloader.bin
+            build-tab5/partition_table/partition-table.bin
+            build-tab5/partition_table/partition-table-launcher.bin
+            build-tab5/flash_args
+          if-no-files-found: error
+
+  # The quality gate: Tests runs on its own for every push; wait for its verdict on the
+  # commit being released instead of running it a second time
+  tests:
+    name: Wait for Tests
+    if: needs.build.outputs.release == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          sparse-checkout: .github/scripts
+      - name: Wait for the Tests run of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: bash .github/scripts/wait-for-tests.sh
+
+  release:
+    if: needs.build.outputs.release == 'true'
+    needs: [build, tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: ${{ needs.build.outputs.tag }}
+      TAB5_IMAGE: SimplrRadio-Tab5-v${{ needs.build.outputs.version }}-release.bin
+      TAB5_LAUNCHER_IMAGE: SimplrRadio-Tab5-v${{ needs.build.outputs.version }}-launcher.bin
+      WAVESHARE_IMAGE: SimplrRadio-Waveshare-v${{ needs.build.outputs.version }}-release.bin
+      WAVESHARE_LAUNCHER_IMAGE: SimplrRadio-Waveshare-v${{ needs.build.outputs.version }}-launcher.bin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+
+      - name: Refuse to overwrite an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. Re-run the workflow to release the next version."
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" != "tag" ] && git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "::error::Tag $TAG already exists without a release. Delete it or release a different version."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: SimplrRadio-v${{ needs.build.outputs.version }}
+          path: firmware
+
+      - name: Write release notes
+        run: |
+          sha() { cut -d' ' -f1 "firmware/dist/$1.sha256"; }
+          python3 .github/scripts/release_notes.py "$VERSION" \
+            "$TAB5_IMAGE" "$(sha "$TAB5_IMAGE")" "$TAB5_LAUNCHER_IMAGE" "$(sha "$TAB5_LAUNCHER_IMAGE")" \
+            "$WAVESHARE_IMAGE" "$(sha "$WAVESHARE_IMAGE")" "$WAVESHARE_LAUNCHER_IMAGE" "$(sha "$WAVESHARE_LAUNCHER_IMAGE")" \
+            release-notes.md
+
+      - name: Publish ${{ needs.build.outputs.tag }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          target_commitish: ${{ needs.build.outputs.sha }}
+          name: SimplrRadio ${{ needs.build.outputs.tag }}
+          body_path: release-notes.md
+          generate_release_notes: true
+          prerelease: ${{ needs.build.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.build.outputs.prerelease != 'true' }}
+          fail_on_unmatched_files: true
+          files: |
+            firmware/dist/${{ env.TAB5_IMAGE }}
+            firmware/dist/${{ env.TAB5_IMAGE }}.sha256
+            firmware/dist/${{ env.TAB5_LAUNCHER_IMAGE }}
+            firmware/dist/${{ env.TAB5_LAUNCHER_IMAGE }}.sha256
+            firmware/dist/${{ env.WAVESHARE_IMAGE }}
+            firmware/dist/${{ env.WAVESHARE_IMAGE }}.sha256
+            firmware/dist/${{ env.WAVESHARE_LAUNCHER_IMAGE }}
+            firmware/dist/${{ env.WAVESHARE_LAUNCHER_IMAGE }}.sha256

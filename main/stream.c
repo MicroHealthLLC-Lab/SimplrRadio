@@ -7,10 +7,12 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <strings.h>
 #include "stream.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/stream_buffer.h"
+#include "freertos/semphr.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
@@ -22,23 +24,54 @@
 #define READ_BUF_SIZE   2048
 #define TASK_STACK      (16 * 1024)
 
-// ── Ring buffer ──────────────────────────────────────────────────────
+// -- Ring buffer ------------------------------------------------------
+// One reader (the decoder). Writes and resets are serialized by s_ring_lock, and only the
+// current stream's task writes: an old task that is slow to notice a stop (stuck in a
+// connect or TLS handshake for up to its timeout) can never feed the next stream.
 static StreamBufferHandle_t s_ringbuf;
+static SemaphoreHandle_t s_ring_lock;
 
-// ── Task control ─────────────────────────────────────────────────────
-static TaskHandle_t s_task;
-static volatile bool s_running;
+// -- Task control -----------------------------------------------------
+// Each stream task has its own context; s_gen names the current one. A task whose generation
+// is no longer current exits without touching the shared state below.
+#define ICY_MAX_METAINT  (64 * 1024)   // Larger values aren't plausible; ignore the header
+#define ICY_META_MAX     (255 * 16)    // Largest block the length byte can announce
+
+typedef struct {
+    uint32_t gen;
+    char url[STREAM_URL_MAX];
+    icy_meta_cb_t meta_cb;
+    // ICY metadata: with "Icy-MetaData: 1" the server interleaves a metadata block after
+    // every `metaint` audio bytes: one length byte (x16), then that many bytes of
+    // "StreamTitle='...';". A block may span HTTP reads, so it is collected across reads.
+    int icy_metaint;   // 0 = no ICY metadata in this stream
+    int icy_count;     // Audio bytes until the next metadata block
+    int meta_need;     // Bytes of the current block still expected, -1 = not in a block
+    int meta_have;
+    char meta_buf[ICY_META_MAX + 1];
+} stream_ctx_t;
+
+static volatile uint32_t s_gen;
+static volatile bool s_running;     // The current stream's task is alive
+static volatile bool s_failed;      // Connection refused / non-2xx (e.g. 403)
+static volatile bool s_connected;   // Got a 2xx and is reading audio
 static volatile bool s_task_done = true;
-static volatile bool s_failed;      // connection refused / non-2xx (e.g. 403)
-static char s_url[300];
-static icy_meta_cb_t s_meta_cb;
 
-// ── ICY metadata state ───────────────────────────────────────────────
-static int  s_icy_metaint;   // 0 = no ICY metadata in this stream
-static int  s_icy_count;     // bytes until next metadata block
+static bool current(const stream_ctx_t *ctx)
+{
+    return ctx->gen == s_gen;
+}
+
+static void icy_reset(stream_ctx_t *ctx, int metaint)
+{
+    ctx->icy_metaint = metaint;
+    ctx->icy_count = metaint;
+    ctx->meta_need = -1;
+    ctx->meta_have = 0;
+}
 
 // Parse "StreamTitle='...'" from an ICY metadata block.
-static void parse_icy_meta(const char *meta, int len)
+static void parse_icy_meta(stream_ctx_t *ctx, const char *meta, int len)
 {
     const char *key = "StreamTitle='";
     const char *p = strnstr(meta, key, len);
@@ -51,13 +84,13 @@ static void parse_icy_meta(const char *meta, int len)
     for (const char *q = p; q < avail - 1; q++) {
         if (q[0] == '\'' && q[1] == ';') { end = q; break; }
     }
-    // Fallback: no "';" found — use the last quote before the block ends.
+    // Fallback: no "';" found - use the last quote before the block ends.
     if (!end) {
         for (const char *q = avail - 1; q >= p; q--) {
             if (*q == '\'') { end = q; break; }
         }
     }
-    if (!end || end == p) return;
+    if (!end || end <= p) return;
 
     int tlen = end - p;
     char title[256];
@@ -78,133 +111,162 @@ static void parse_icy_meta(const char *meta, int len)
         *url = '\0';
     }
 
-    ESP_LOGI(TAG, "ICY: %s", title);
-    if (s_meta_cb) s_meta_cb(title);
+    if (ctx->meta_cb && current(ctx)) ctx->meta_cb(title);
 }
 
-// Feed raw bytes into the ring buffer, handling ICY metadata boundaries.
+// Feed raw bytes into the ring buffer, taking out the ICY metadata blocks.
 // `data` is raw HTTP body bytes (interleaved audio + ICY blocks when enabled).
-static void feed_data(const uint8_t *data, int len)
+static void feed_data(stream_ctx_t *ctx, const uint8_t *data, int len)
 {
-    while (len > 0) {
-        if (s_icy_metaint > 0 && s_icy_count == 0) {
-            // Next byte is the ICY metadata length prefix
-            int meta_len = (*data) * 16;
-            data++; len--;
-            if (meta_len > 0 && meta_len <= len) {
-                parse_icy_meta((const char *)data, meta_len);
-                data += meta_len;
-                len  -= meta_len;
-            } else if (meta_len > 0) {
-                // Metadata spans across HTTP chunks — skip it
-                data += len;
-                len = 0;
+    while (len > 0 && current(ctx)) {
+        if (ctx->icy_metaint > 0 && ctx->icy_count == 0) {
+            if (ctx->meta_need < 0) {
+                // The block's length byte
+                ctx->meta_need = *data * 16;
+                ctx->meta_have = 0;
+                data++; len--;
             }
-            s_icy_count = s_icy_metaint;
+            int take = ctx->meta_need - ctx->meta_have;
+            if (take > len) take = len;
+            memcpy(ctx->meta_buf + ctx->meta_have, data, take);
+            ctx->meta_have += take;
+            data += take; len -= take;
+            if (ctx->meta_have < ctx->meta_need) {
+                continue;   // The rest arrives with the next read
+            }
+            if (ctx->meta_need > 0) {
+                ctx->meta_buf[ctx->meta_have] = '\0';
+                parse_icy_meta(ctx, ctx->meta_buf, ctx->meta_have);
+            }
+            ctx->meta_need = -1;
+            ctx->icy_count = ctx->icy_metaint;
             continue;
         }
 
-        // How many audio bytes until next metadata boundary?
+        // Audio bytes up to the next metadata boundary
         int chunk = len;
-        if (s_icy_metaint > 0 && chunk > s_icy_count)
-            chunk = s_icy_count;
+        if (ctx->icy_metaint > 0 && chunk > ctx->icy_count)
+            chunk = ctx->icy_count;
 
-        // Bail out promptly if a stop was requested — otherwise we could
-        // stay blocked in xStreamBufferSend while play_station() tears the
-        // stream down, leaving two producers on the single-producer buffer.
-        if (!s_running) break;
-
-        // Write audio bytes to ring buffer (short blocking window so we can
-        // notice s_running going false quickly)
-        size_t written = xStreamBufferSend(s_ringbuf, data, chunk,
-                                            pdMS_TO_TICKS(100));
+        // Short blocking window so a stop is noticed quickly; only the current stream writes
+        size_t written = 0;
+        xSemaphoreTake(s_ring_lock, portMAX_DELAY);
+        if (current(ctx)) {
+            written = xStreamBufferSend(s_ringbuf, data, chunk, pdMS_TO_TICKS(100));
+        }
+        xSemaphoreGive(s_ring_lock);
         data += written;
         len  -= written;
-        if (s_icy_metaint > 0) s_icy_count -= written;
+        if (ctx->icy_metaint > 0) ctx->icy_count -= written;
 
-        if (written == 0 && s_running) {
-            // Buffer full and timed out — drop remaining chunk
-            ESP_LOGW(TAG, "Ring buffer full, dropping %d bytes", len);
-            break;
+        if (written == 0 && current(ctx)) {
+            // Buffer full and timed out (decoder stalled): drop the rest of this read. Keep
+            // the metadata position in step, or every later block would be read as audio.
+            int drop = len;
+            if (ctx->icy_metaint > 0 && drop > ctx->icy_count) drop = ctx->icy_count;
+            data += drop;
+            len -= drop;
+            if (ctx->icy_metaint > 0) ctx->icy_count -= drop;
         }
     }
 }
 
-// ── HTTP event handler ───────────────────────────────────────────────
+// -- HTTP event handler -----------------------------------------------
 static esp_err_t http_event(esp_http_client_event_t *evt)
 {
-    if (evt->event_id == HTTP_EVENT_ON_HEADER) {
+    stream_ctx_t *ctx = (stream_ctx_t *)evt->user_data;
+    if (evt->event_id == HTTP_EVENT_ON_HEADER && ctx && evt->header_key && evt->header_value) {
         if (strcasecmp(evt->header_key, "icy-metaint") == 0) {
-            s_icy_metaint = atoi(evt->header_value);
-            s_icy_count   = s_icy_metaint;
-            ESP_LOGI(TAG, "ICY metaint = %d", s_icy_metaint);
+            char *end = NULL;
+            long v = strtol(evt->header_value, &end, 10);
+            icy_reset(ctx, end != evt->header_value && v > 0 && v <= ICY_MAX_METAINT ? (int)v : 0);
         }
     }
     return ESP_OK;
 }
 
-// ── Streaming task ───────────────────────────────────────────────────
+// -- Streaming task ---------------------------------------------------
+// The task's end: shared state is only the current stream's to change
+static void finish(stream_ctx_t *ctx, bool failed)
+{
+    if (current(ctx)) {
+        if (failed) s_failed = true;
+        s_connected = false;
+        s_running = false;
+        s_task_done = true;
+    }
+    ESP_LOGI(TAG, "Stream task exiting");
+    heap_caps_free(ctx);
+    vTaskDelete(NULL);
+}
+
 static void stream_task(void *arg)
 {
-    s_task_done = false;
-    ESP_LOGI(TAG, "Connecting to %s", s_url);
+    stream_ctx_t *ctx = (stream_ctx_t *)arg;
+    ESP_LOGI(TAG, "Connecting to %s", ctx->url);
 
     esp_http_client_config_t cfg = {
-        .url            = s_url,
+        .url            = ctx->url,
         .event_handler  = http_event,
+        .user_data      = ctx,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms     = 10000,
         .buffer_size    = READ_BUF_SIZE,
         .user_agent     = "VLC/3.0.20 LibVLC/3.0.20",
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) {
+        finish(ctx, true);
+        return;
+    }
 
     // Request ICY metadata
     esp_http_client_set_header(client, "Icy-MetaData", "1");
 
     // Open with redirect handling (esp_http_client_open doesn't auto-follow)
+    bool failed = false;
+    uint8_t *buf = NULL;
     int max_redirects = 5;
     int status = 0;
-    while (max_redirects-- > 0) {
-        s_icy_metaint = 0;
-        s_icy_count   = 0;
-
+    while (max_redirects-- > 0 && current(ctx)) {
+        icy_reset(ctx, 0);
         esp_err_t err = esp_http_client_open(client, 0);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
-            s_failed = true;
+            failed = true;
             goto done;
         }
-
         esp_http_client_fetch_headers(client);
         status = esp_http_client_get_status_code(client);
         ESP_LOGI(TAG, "HTTP %d", status);
-
         if (status == 301 || status == 302 || status == 307 || status == 308) {
-            err = esp_http_client_set_redirection(client);
-            if (err != ESP_OK) {
+            if (esp_http_client_set_redirection(client) != ESP_OK) {
                 ESP_LOGE(TAG, "Redirect failed");
+                failed = true;
                 goto done;
             }
-            ESP_LOGI(TAG, "Following redirect...");
             // Re-set ICY header (lost after redirect)
             esp_http_client_set_header(client, "Icy-MetaData", "1");
             continue;
         }
         break;
     }
-
+    if (!current(ctx)) {
+        goto done;
+    }
     if (status < 200 || status >= 300) {
         ESP_LOGE(TAG, "HTTP error %d", status);
-        s_failed = true;
+        failed = true;
         goto done;
     }
 
-    // Read loop
-    uint8_t *buf = malloc(READ_BUF_SIZE);
-    if (!buf) goto done;
-
-    while (s_running) {
+    buf = malloc(READ_BUF_SIZE);
+    if (!buf) {
+        failed = true;
+        goto done;
+    }
+    s_connected = true;
+    while (current(ctx)) {
         int n = esp_http_client_read(client, (char *)buf, READ_BUF_SIZE);
         if (n < 0) {
             ESP_LOGE(TAG, "Read error");
@@ -214,58 +276,71 @@ static void stream_task(void *arg)
             ESP_LOGI(TAG, "Stream ended");
             break;
         }
-        feed_data(buf, n);
+        feed_data(ctx, buf, n);
     }
 
-    free(buf);
-
 done:
+    free(buf);
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    s_running = false;
-    s_task = NULL;
-    s_task_done = true;
-    ESP_LOGI(TAG, "Stream task exiting");
-    vTaskDelete(NULL);
+    finish(ctx, failed);
 }
 
-// ── Public API ───────────────────────────────────────────────────────
+// -- Public API -------------------------------------------------------
 
 void stream_start(const char *url, icy_meta_cb_t meta_cb)
 {
     stream_stop();
-
-    s_icy_metaint = 0;
-    s_icy_count   = 0;
-    s_meta_cb     = meta_cb;
-    snprintf(s_url, sizeof(s_url), "%s", url);
-
-    if (!s_ringbuf) {
-        s_ringbuf = xStreamBufferCreate(RING_BUF_SIZE, 1);
-    } else {
-        xStreamBufferReset(s_ringbuf);
+    s_failed = false;
+    // Station URLs come from a public directory: only plain web streams are opened
+    if (!url || (strncasecmp(url, "http://", 7) != 0 && strncasecmp(url, "https://", 8) != 0) ||
+        strlen(url) >= STREAM_URL_MAX) {
+        ESP_LOGW(TAG, "Refusing stream URL");
+        s_failed = true;
+        return;
     }
+    if (!s_ringbuf) {
+        s_ring_lock = xSemaphoreCreateMutex();
+        s_ringbuf = xStreamBufferCreate(RING_BUF_SIZE, 1);
+    }
+    stream_ctx_t *ctx = heap_caps_calloc(1, sizeof(stream_ctx_t), MALLOC_CAP_SPIRAM);
+    if (!ctx || !s_ringbuf || !s_ring_lock) {
+        heap_caps_free(ctx);
+        s_failed = true;
+        return;
+    }
+    snprintf(ctx->url, sizeof(ctx->url), "%s", url);
+    ctx->meta_cb = meta_cb;
+    ctx->gen = s_gen;
+    icy_reset(ctx, 0);
 
-    s_failed  = false;
-    s_running = true;
-    xTaskCreate(stream_task, "stream", TASK_STACK, NULL, 5, &s_task);
+    s_running   = true;
+    s_task_done = false;   // Before the task exists: a stop right after start waits for it
+    if (xTaskCreate(stream_task, "stream", TASK_STACK, ctx, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "No memory for the stream task");
+        heap_caps_free(ctx);
+        s_running = false;
+        s_task_done = true;
+        s_failed = true;
+    }
 }
 
 void stream_stop(void)
 {
-    s_running = false;
-
-    // Wait for the stream task to actually exit before touching the ring
-    // buffer. xStreamBufferReset() asserts if a task is still blocked on a
-    // send, and a lingering producer would collide with the next task.
-    for (int i = 0; i < 100 && !s_task_done; i++) {
+    s_gen = s_gen + 1;   // The running task (if any) is no longer current
+    // Give it a moment to leave (frees its socket); one stuck in a connect exits on its own
+    // later without touching the next stream
+    for (int i = 0; i < 25 && !s_task_done; i++) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-
+    s_running = false;
+    s_connected = false;
+    s_task_done = true;
     if (s_ringbuf) {
+        xSemaphoreTake(s_ring_lock, portMAX_DELAY);   // No writer is inside a send now
         xStreamBufferReset(s_ringbuf);
+        xSemaphoreGive(s_ring_lock);
     }
-    s_task = NULL;
 }
 
 int stream_read(uint8_t *buf, int len, uint32_t timeout_ms)
@@ -282,4 +357,9 @@ bool stream_is_active(void)
 bool stream_failed(void)
 {
     return s_failed;
+}
+
+bool stream_connected(void)
+{
+    return s_connected && s_running;
 }

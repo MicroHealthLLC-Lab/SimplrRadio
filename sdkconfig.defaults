@@ -1,56 +1,77 @@
-# Target: ESP32-P4 v1.x silicon (NOT v3.x — required or the bootloader
-# refuses to flash on this hardware)
+# Shared settings for both boards (ESP32-P4 + ESP32-C6 WiFi co-processor). The board files
+# (sdkconfig.defaults.tab5, sdkconfig.defaults.waveshare) are applied after this one; the full
+# configurations (sdkconfig.tab5, sdkconfig.waveshare) are committed: rebuild and commit them
+# when changing a setting here.
+
+# --- Chip, flash, CPU ------------------------------------------------------------
+# ESP32-P4 v1.x silicon: ESP-IDF 5.5.1 defaults to it (minimum rev 0.1, maximum below v2.0)
 CONFIG_IDF_TARGET="esp32p4"
-CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
-
-# Flash
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-
-# CPU (360 MHz)
-CONFIG_ESP_DEFAULT_CPU_FREQ_360=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
 CONFIG_FREERTOS_HZ=1000
+# Optimize for speed (MP3 decode, TLS, rendering)
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Stack smashing protection for functions with local arrays (parsers of untrusted input)
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 
-# Console: UART primary + USB-JTAG secondary. USB-JTAG as the PRIMARY console
-# (EV-board style) is fragile on the Waveshare/Tab5 — resets re-enumerate USB
-# and wedge the console so logs stop. UART primary anchors the console; the
-# USB-JTAG secondary still mirrors logs to /dev/ttyACM0 robustly.
+# --- Console -----------------------------------------------------------------------
+# UART primary + USB-JTAG secondary. USB-JTAG as the primary console is fragile on these
+# boards (resets re-enumerate USB and logging stops).
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 
-# Main task stack (needs to be large enough for display init)
+# --- Memory --------------------------------------------------------------------------
+# app_main brings up power, display, touch and audio before the app task takes over
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
-
-# Custom partition table (4 MB app partition)
-CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-
-# PSRAM (HEX @ 200 MHz — requires IDF_EXPERIMENTAL_FEATURES)
+# 32 MB hex PSRAM at 200 MHz (marked experimental in ESP-IDF 5.5)
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_HEX=y
 CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_MEMTEST=n
+# Allocations above 16 KB go to PSRAM, keeping internal RAM for stacks, DMA and WiFi
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
-# esp_hosted: ESP32-C6 co-processor via SDIO for WiFi
+# --- WiFi (ESP32-C6 co-processor over SDIO, esp_hosted) ------------------------------
 CONFIG_ESP_HOSTED_ENABLED=y
 CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
 CONFIG_ESP_HOSTED_IDF_SLAVE_TARGET="esp32c6"
-CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
-CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
-CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=54
 CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
 CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH=4
 CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
-CONFIG_ESP_HOSTED_SDIO_PIN_CMD=19
-CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
-CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
-CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
-CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
-CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 CONFIG_ESP_WIFI_REMOTE_ENABLED=y
-
-# Disable SoftAP (saves flash)
+# Station only: no access point (setup happens on the screen)
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+CONFIG_WIFI_RMT_SOFTAP_SUPPORT=n
+# WiFi passwords live encrypted in the radio's vault (secret_vault.cpp); the driver keeps no
+# plain-text copy (also set at runtime: esp_wifi_set_storage(WIFI_STORAGE_RAM))
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+CONFIG_WIFI_RMT_NVS_ENABLED=n
+# IPv4 only, no DHCP server, no Bluetooth: nothing listens on the network
+CONFIG_LWIP_IPV6=n
+CONFIG_LWIP_DHCPS=n
+CONFIG_BT_ENABLED=n
 
-# HTTPS for Radio Browser API
+# --- TLS ---------------------------------------------------------------------------
+# HTTPS for the station directory, streams and sign-in pages, verified with the CA bundle
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_ESP_TLS_INSECURE=n
+
+# --- LVGL ----------------------------------------------------------------------------
+# LVGL allocates from the heap, preferring PSRAM (main/lv_mem_psram.c)
+CONFIG_LV_USE_CUSTOM_MALLOC=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_FONT_MONTSERRAT_40=y
+CONFIG_LV_USE_KEYBOARD=y
+CONFIG_LV_USE_TEXTAREA=y

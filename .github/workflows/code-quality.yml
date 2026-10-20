@@ -1,0 +1,116 @@
+# Code quality checks. Report only: nothing here fails a push or pull request.
+# Findings show up as annotations on the changed files and in each job's summary.
+name: Code quality
+
+on:
+  push:
+    branches: [main, integration]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cppcheck:
+    name: Static analysis (cppcheck)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install cppcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck --version
+          cppcheck --enable=warning,style,performance,portability --std=c++17 --language=c++ \
+            --inline-suppr --quiet \
+            --suppress=missingIncludeSystem --suppress=missingInclude --suppress=unmatchedSuppression \
+            -I main \
+            --template='{file}\t{line}\t{severity}\t{id}\t{message}' \
+            main/*.cpp main/*.c 2> cppcheck.txt || true
+
+      - name: Report findings
+        run: |
+          count=$(grep -c . cppcheck.txt || true)
+          while IFS=$'\t' read -r file line severity id message; do
+            [ -n "$file" ] && echo "::warning file=$file,line=$line,title=cppcheck $id::$severity: $message"
+          done < cppcheck.txt
+          {
+            echo "## cppcheck"
+            echo ""
+            if [ "$count" = "0" ]; then
+              echo "No findings. :tada:"
+            else
+              echo "**$count findings** (see annotations)."
+              echo ""
+              echo "| Check | Count |"
+              echo "|---|---|"
+              cut -f4 cppcheck.txt | sort | uniq -c | sort -rn | awk '{print "| `"$2"` | "$1" |"}'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  flawfinder:
+    name: Security lint (flawfinder)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install flawfinder
+        run: pip install --quiet flawfinder
+
+      - name: Run flawfinder
+        run: |
+          flawfinder --minlevel=2 --singleline --dataonly --quiet main/*.cpp main/*.c main/*.h main/*.hpp > flawfinder.txt || true
+          count=$(grep -cE '^main/' flawfinder.txt || true)
+          # Lines look like: main/file.cpp:123:  [2] (buffer) char:Statically-sized arrays ...
+          grep -E '^main/' flawfinder.txt | while IFS= read -r l; do
+            file=${l%%:*}; rest=${l#*:}; line=${rest%%:*}; msg=${rest#*:}
+            msg=${msg#"${msg%%[! ]*}"}   # Drop leading spaces
+            echo "::warning file=$file,line=$line,title=flawfinder::$msg"
+          done
+          {
+            echo "## flawfinder (risk level 2+)"
+            echo ""
+            if [ "$count" = "0" ]; then
+              echo "No findings. :tada:"
+            else
+              echo "**$count findings** (see annotations). Many are advisory - review each one."
+              echo ""
+              echo "| Category | Count |"
+              echo "|---|---|"
+              grep -oE '^main/[^ ]+ +\[[0-9]\] \([a-z]+\)' flawfinder.txt | grep -oE '\([a-z]+\)' | sort | uniq -c | sort -rn \
+                | awk '{print "| "$2" | "$1" |"}'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  compiler-warnings:
+    name: Compiler warnings
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Pull ESP-IDF image (retries transient registry errors)
+        run: |
+          for attempt in 1 2 3 4; do
+            docker pull espressif/idf:v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884 && exit 0
+            echo "Pull failed (attempt $attempt), retrying..."
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Build (ESP-IDF v5.5.1)
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v5.5.1@sha256:dfa2d076c796769c07c155eba6c672b9f395aec943b2ba3701b73379b5f9e884  # espressif/idf:v5.5.1 pinned by digest
+          target: esp32p4
+          extra_docker_args: -e BOARD=tab5
+          # The action wraps this in bash -c '...', so it must not contain single quotes
+          command: idf.py -B build-tab5 build 2>&1 | tee build-output.log; exit 0
+
+      - name: Report compiler warnings
+        run: python3 .github/scripts/report_warnings.py build-output.log

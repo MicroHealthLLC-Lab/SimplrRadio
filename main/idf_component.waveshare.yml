@@ -1,10 +1,11 @@
+## Waveshare ESP32-P4-WIFI6-Touch-LCD-4B dependencies (copied to main/idf_component.yml at
+## configure time; see CMakeLists.txt). Pinned like idf_component.tab5.yml.
 dependencies:
-  idf: ">=5.3"
-  # Match the C6 slave firmware (v2.12.3) on the host side. The old <2.12 pin
-  # was for an earlier 2.12.x boot assert (esp_startup_start_app); 2.12.3 fixes
-  # it — verified booting + streaming on BOTH the Waveshare and the Tab5.
-  espressif/esp_hosted: "==2.12.3"
-  espressif/esp_wifi_remote: "==1.5.0"
-  espressif/es8311: "^1.0.0"
-  chmorgan/esp-libhelix-mp3: "*"
-  espressif/esp-dsp: ">=0.3.0"
+  idf: '~5.5.1'
+  lvgl/lvgl: '==9.6.0~1'   # As SimplrSSH's Tab5 release builds (the resolver lifts 9.4.0 to it)
+  espressif/esp_lvgl_port: '==2.8.0~1'
+  espressif/esp_hosted: '==2.12.3'
+  espressif/esp_wifi_remote: '==1.5.0'
+  espressif/es8311: '==1.0.0'
+  chmorgan/esp-libhelix-mp3: '==1.0.3'
+  espressif/esp-dsp: '==1.8.2'
