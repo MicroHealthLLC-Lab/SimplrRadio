@@ -1,49 +1,68 @@
-include("${CMAKE_CURRENT_LIST_DIR}/../board_config.cmake")
-message(STATUS "COMPONENT: BOARD='${BOARD}'")
-
-set(BOARD_SRC "")
-set(EXTRA_REQUIRES "")
+# The board (BOARD, chosen in the root CMakeLists.txt) picks its source files and drivers;
+# everything else is shared.
+include("${CMAKE_CURRENT_LIST_DIR}/../board_config.cmake" OPTIONAL)
+if(NOT BOARD)
+    set(BOARD "tab5")
+endif()
 
 if(BOARD STREQUAL "tab5")
-    set(BOARD_SRC "board_m5stack_tab5.c")
-    list(APPEND EXTRA_REQUIRES esp_codec_dev esp_lcd_touch_st7123 esp_lcd_st7123 esp_driver_ppa)
+    set(BOARD_SRCS "board_m5stack_tab5.c" "tab5_keyboard.c" "tab5_keymap.c")
+    set(BOARD_REQUIRES espressif__m5stack_tab5 esp_driver_i2c)
 else()
-    set(BOARD_SRC "board_waveshare_p4_720.c")
-    list(APPEND EXTRA_REQUIRES esp_lcd_st7703 es8311)
+    set(BOARD_SRCS "board_waveshare_p4_720.c")
+    set(BOARD_REQUIRES esp_lcd_st7703 espressif__es8311 driver)
 endif()
 
 idf_component_register(
     SRCS
-        "main.c"
-        ${BOARD_SRC}
-        "wifi.c"
-        "slave_ota.c"
-        "radio_browser.c"
-        "stream.c"
+        "app.cpp"
+        ${BOARD_SRCS}
+        "lv_mem_psram.c"
         "mp3_decoder.c"
+        "player.c"
+        "portal.cpp"
+        "portal_client.cpp"
+        "radio_browser.c"
+        "secret_vault.cpp"
+        "settings.cpp"
+        "settings_nvs.cpp"
+        "slave_ota.c"
         "spectrum.c"
-        "font8x16.c"
-        "touch.c"
+        "stream.c"
+        "text.c"
+        "ui_page.cpp"
+        "ui_view.cpp"
+        "wifi_mgr.cpp"
     INCLUDE_DIRS "."
     REQUIRES
-        esp_lcd
-        esp_psram
-        esp_mm
-        esp_timer
-        log
-        driver
+        app_update
+        esp_app_format
+        esp_driver_gpio
         esp_driver_i2s
-        esp_wifi
         esp_event
-        nvs_flash
-        esp_netif
         esp_http_client
+        esp_hosted
+        esp_lcd
+        esp_netif
+        esp_partition
+        esp_psram
+        esp_timer
+        esp_wifi
         esp-tls
         json
-        esp_hosted
-        wifi_prov
-        esp_app_format
-        esp_partition
-        app_update
-        ${EXTRA_REQUIRES}
+        lvgl__lvgl
+        espressif__esp_lvgl_port
+        espressif__esp-dsp
+        chmorgan__esp-libhelix-mp3
+        mbedtls
+        nvs_flash
+        ${BOARD_REQUIRES}
 )
+
+# The ESP32-C6 WiFi firmware travels inside the app (slave_ota.c), so every install method
+# brings it along and the app image's checksum covers it
+target_add_binary_data(${COMPONENT_TARGET} "${CMAKE_CURRENT_LIST_DIR}/../slave_fw/network_adapter.bin" BINARY)
+
+# LVGL's allocator (lv_mem_psram.c) is only referenced from the lvgl library, which links
+# after this one: keep it in the image
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-u lv_malloc_core")

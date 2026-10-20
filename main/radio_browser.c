@@ -1,8 +1,8 @@
 // Copyright 2025 David M. King
 // SPDX-License-Identifier: Apache-2.0
 //
-// Radio Browser API client
-// Endpoint: https://de1.api.radio-browser.info/json/stations/search
+// Radio Browser API client: the station search from the on-screen settings (settings.h),
+// tried on several of the directory's public servers in turn.
 // Docs: https://api.radio-browser.info/
 
 #include <string.h>
@@ -13,23 +13,26 @@
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
-#include "wifi_prov.h"
 #include "radio_browser.h"
+#include "settings.h"
+#include "text.h"
+#include <strings.h>
 
 #define TAG "radio_browser"
 
+// The directory's public servers (each has its own TLS certificate); one being down or
+// renamed doesn't strand the radio.
+static const char *const SERVERS[] = {
+    "de1.api.radio-browser.info",
+    "de2.api.radio-browser.info",
+    "fi1.api.radio-browser.info",
+    "at1.api.radio-browser.info",
+};
+
 // Fixed part of the query: top MP3 stations by vote count, working only.
-#define API_BASE \
-    "https://de1.api.radio-browser.info/json/stations/search" \
-    "?order=votes&reverse=true&hidebroken=true&codec=MP3"
+#define API_QUERY "/json/stations/search?order=votes&reverse=true&hidebroken=true&codec=MP3"
 
-// Built-in defaults, used when the captive-portal fields were never set (i.e.
-// a unit provisioned before these fields existed — keeps the old behavior).
-#define DEFAULT_COUNTRY "US"
-#define DEFAULT_STATE   "Texas"
-#define DEFAULT_LIMIT   60
-
-#define RESP_BUF_SIZE (128 * 1024)  // 128 KB in PSRAM — Radio Browser returns ~70 KB for 60 stations
+#define RESP_BUF_SIZE (128 * 1024)  // 128 KB in PSRAM - Radio Browser returns ~70 KB for 60 stations
 
 // Percent-encode `src` into `dst` (RFC 3986 unreserved set passes through).
 static void url_encode(char *dst, size_t dlen, const char *src)
@@ -50,33 +53,31 @@ static void url_encode(char *dst, size_t dlen, const char *src)
     dst[o] = '\0';
 }
 
-// Assemble the search URL from the captive-portal settings (or defaults).
-static void build_api_url(char *url, size_t ulen, int max_stations)
+// The search URL on `server`, from the saved station search
+static void build_api_url(char *url, size_t ulen, const char *server, int max_stations)
 {
-    char country[8], state[STATION_NAME_LEN], count[8];
-
-    // wifi_prov_get returns false when the key was never stored — fall back to
-    // the historical US/Texas/60 query. An explicitly-blank field means "no
-    // filter" (worldwide / all states), so we keep the empty string.
-    if (!wifi_prov_get("country", country, sizeof(country)))
-        snprintf(country, sizeof(country), "%s", DEFAULT_COUNTRY);
-    if (!wifi_prov_get("state", state, sizeof(state)))
-        snprintf(state, sizeof(state), "%s", DEFAULT_STATE);
-
-    int limit = DEFAULT_LIMIT;
-    if (wifi_prov_get("count", count, sizeof(count)) && count[0])
-        limit = atoi(count);
+    station_search_t search;
+    settings_get_search(&search);
+    int limit = search.count;
     if (limit < 1) limit = 1;
     if (limit > max_stations) limit = max_stations;
 
-    int n = snprintf(url, ulen, "%s&limit=%d", API_BASE, limit);
-    if (country[0] && n < (int)ulen)
-        n += snprintf(url + n, ulen - n, "&countrycode=%s", country);
-    if (state[0] && n < (int)ulen) {
-        char enc[3 * STATION_NAME_LEN];
-        url_encode(enc, sizeof(enc), state);
+    int n = snprintf(url, ulen, "https://%s%s&limit=%d", server, API_QUERY, limit);
+    if (search.country[0] && n > 0 && n < (int)ulen) {
+        char enc[3 * SEARCH_COUNTRY_LEN];
+        url_encode(enc, sizeof(enc), search.country);
+        n += snprintf(url + n, ulen - n, "&countrycode=%s", enc);
+    }
+    if (search.state[0] && n > 0 && n < (int)ulen) {
+        char enc[3 * SEARCH_STATE_LEN];
+        url_encode(enc, sizeof(enc), search.state);
         snprintf(url + n, ulen - n, "&state=%s", enc);
     }
+}
+
+static bool web_url(const char *url)
+{
+    return strncasecmp(url, "http://", 7) == 0 || strncasecmp(url, "https://", 8) == 0;
 }
 
 static char *s_resp_buf;
@@ -86,7 +87,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 {
     switch (evt->event_id) {
     case HTTP_EVENT_ON_DATA:
-        if (s_resp_len + evt->data_len < RESP_BUF_SIZE - 1) {
+        if (evt->data_len > 0 && s_resp_len + evt->data_len < RESP_BUF_SIZE - 1) {
             memcpy(s_resp_buf + s_resp_len, evt->data, evt->data_len);
             s_resp_len += evt->data_len;
         } else {
@@ -99,6 +100,35 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
+// One request to one server; the body ends up in s_resp_buf
+static bool query(const char *server, int max_stations)
+{
+    char api_url[512];
+    build_api_url(api_url, sizeof(api_url), server, max_stations);
+    ESP_LOGI(TAG, "Query: %s", api_url);
+
+    s_resp_len = 0;
+    esp_http_client_config_t config = {
+        .url = api_url,
+        .event_handler = http_event_handler,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms = 10000,
+        .user_agent = "esp32-p4-webradio/2",
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        return false;
+    }
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGW(TAG, "%s: err=%s status=%d", server, esp_err_to_name(err), status);
+        return false;
+    }
+    return true;
+}
+
 int radio_browser_fetch(radio_station_t *stations, int max_stations)
 {
     s_resp_buf = heap_caps_malloc(RESP_BUF_SIZE, MALLOC_CAP_SPIRAM);
@@ -106,28 +136,13 @@ int radio_browser_fetch(radio_station_t *stations, int max_stations)
         ESP_LOGE(TAG, "No memory for response buffer");
         return 0;
     }
-    s_resp_len = 0;
-
-    char api_url[512];
-    build_api_url(api_url, sizeof(api_url), max_stations);
-    ESP_LOGI(TAG, "Query: %s", api_url);
-
-    esp_http_client_config_t config = {
-        .url = api_url,
-        .event_handler = http_event_handler,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = 10000,
-        .user_agent = "p4-radio/1.0",
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-
-    esp_err_t err = esp_http_client_perform(client);
-    int status = esp_http_client_get_status_code(client);
-    esp_http_client_cleanup(client);
-
-    if (err != ESP_OK || status != 200) {
-        ESP_LOGE(TAG, "HTTP request failed: err=%d status=%d", err, status);
+    bool ok = false;
+    for (size_t i = 0; i < sizeof(SERVERS) / sizeof(SERVERS[0]) && !ok; i++) {
+        ok = query(SERVERS[i], max_stations);
+    }
+    if (!ok) {
         free(s_resp_buf);
+        s_resp_buf = NULL;
         return 0;
     }
 
@@ -155,8 +170,9 @@ int radio_browser_fetch(radio_station_t *stations, int max_stations)
         cJSON *tags = cJSON_GetObjectItem(item, "tags");
         cJSON *br   = cJSON_GetObjectItem(item, "bitrate");
 
-        // Skip stations without a usable stream URL
-        if (!cJSON_IsString(url) || !url->valuestring || url->valuestring[0] == '\0')
+        // Skip stations without a usable stream URL (http/https only, and it must fit)
+        if (!cJSON_IsString(url) || !url->valuestring || !web_url(url->valuestring) ||
+            strlen(url->valuestring) >= STATION_URL_LEN)
             continue;
         if (!cJSON_IsString(name))
             continue;
@@ -170,11 +186,13 @@ int radio_browser_fetch(radio_station_t *stations, int max_stations)
             continue;
 
         radio_station_t *s = &stations[count];
-        snprintf(s->name,   sizeof(s->name),   "%s", name->valuestring);
-        snprintf(s->url,    sizeof(s->url),     "%s", url->valuestring);
-        snprintf(s->tags,   sizeof(s->tags),    "%s",
-                 (cJSON_IsString(tags) && tags->valuestring) ? tags->valuestring : "");
-        s->bitrate = cJSON_IsNumber(br) ? (uint32_t)br->valuedouble : 0;
+        // Names and tags are shown on screen: printable ASCII only (text.h)
+        text_to_ascii(s->name, sizeof(s->name), n);
+        if (!s->name[0]) snprintf(s->name, sizeof(s->name), "Station %d", count + 1);
+        snprintf(s->url, sizeof(s->url), "%s", url->valuestring);
+        text_to_ascii(s->tags, sizeof(s->tags), t);
+        double kbps = cJSON_IsNumber(br) ? br->valuedouble : 0;
+        s->bitrate = kbps > 0 && kbps < 10000 ? (uint32_t)kbps : 0;
 
         ESP_LOGI(TAG, "[%2d] %s (%u kbps)", count, s->name, s->bitrate);
         count++;

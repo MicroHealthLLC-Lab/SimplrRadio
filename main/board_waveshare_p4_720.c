@@ -2,32 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Board: Waveshare ESP32-P4-WIFI6-Touch-LCD-4B
-//   Display : 720x720 MIPI-DSI (ST7703), RGB565, hardware double-buffered
-//   Touch   : GT911 capacitive (direct I2C)
+//   Display : 720x720 MIPI-DSI (ST7703), RGB565, driven by LVGL (esp_lvgl_port)
+//   Touch   : GT911 capacitive (direct I2C), an LVGL pointer input
 //   Audio   : ES8311 codec + I2S
-//
-// Implements display.h, audio.h, and board.h (raw touch read) for this board.
-// The shared render code (main/font/spectrum) and gesture layer (touch.c) are
-// board-independent.
+//   Keyboard: none (text is typed on the on-screen keyboard)
 
 #include <string.h>
-#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
-#include "esp_cache.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_ldo_regulator.h"
 #include "esp_lcd_st7703.h"
+#include "esp_lvgl_port.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/i2s_std.h"
 #include "es8311.h"
 
-#include "display.h"
 #include "audio.h"
 #include "board.h"
 
@@ -35,9 +30,37 @@ static const char *TAG = "board_wvshr";
 
 const char *board_name(void) { return "Waveshare ESP32-P4 720x720"; }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Display — 720x720 ST7703, num_fbs=2 RGB565 (direct draw, ~46fps)
-// ─────────────────────────────────────────────────────────────────────────
+void board_init_power(void)
+{
+    // Nothing switched: the panel, codec and WiFi co-processor are powered from the start
+}
+
+esp_err_t board_keyboard_init(void) { return ESP_OK; }
+uint32_t board_read_key(void) { return 0; }
+bool board_keyboard_present(void) { return false; }
+
+const board_ui_t *board_ui(void)
+{
+    static const board_ui_t ui = {
+        .small = &lv_font_montserrat_14,
+        .text = &lv_font_montserrat_16,
+        .title = &lv_font_montserrat_20,
+        .list = &lv_font_montserrat_20,
+        .big = &lv_font_montserrat_32,
+        .bar_h = 44,
+        .row_h = 60,
+        .gap = 6,
+        .button_h = 72,
+        .keyboard_h = 280,
+    };
+    return &ui;
+}
+
+static bool touch_read(uint16_t *x, uint16_t *y);
+
+// -------------------------------------------------------------------------
+// Display - 720x720 ST7703, RGB565; LVGL draws partial buffers into the panel's framebuffer
+// -------------------------------------------------------------------------
 #define LCD_W             720
 #define LCD_H             720
 #define DSI_LANE_NUM      2
@@ -48,43 +71,11 @@ const char *board_name(void) { return "Waveshare ESP32-P4 720x720"; }
 #define DSI_BK_LIGHT_GPIO 26
 #define DSI_RST_GPIO      27
 
-// Runtime display dimensions (declared in display.h).
-int g_disp_w;
-int g_disp_h;
-
-static uint8_t *s_fb[2];    // the two DPI framebuffers
-static int      s_back;     // index of the buffer we render into
-uint8_t        *g_backbuf;  // current render buffer (public for inline set_pixel)
-
 static esp_lcd_panel_handle_t panel_handle;
+static esp_lcd_panel_io_handle_t s_dbi_io;
 
-void display_flush_wait(void)
+static void panel_init(void)
 {
-    // No-op: with num_fbs=2 the driver's draw_bitmap blocks on the buffer swap.
-}
-
-void display_flush(void)
-{
-    esp_cache_msync(g_backbuf, DISP_FB_SIZE, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, DISP_W, DISP_H, g_backbuf);
-    s_back ^= 1;
-    g_backbuf = s_fb[s_back];
-}
-
-uint8_t *display_backbuf(void) { return g_backbuf; }
-
-void display_fill(uint8_t r, uint8_t g, uint8_t b)
-{
-    uint16_t px = disp_rgb565(r, g, b);
-    uint16_t *buf = (uint16_t *)g_backbuf;
-    int n = DISP_W * DISP_H;
-    for (int i = 0; i < n; i++) buf[i] = px;
-}
-
-void display_init(void)
-{
-    g_disp_w = LCD_W;
-    g_disp_h = LCD_H;
 
     esp_ldo_channel_handle_t ldo = NULL;
     esp_ldo_channel_config_t ldo_cfg = {
@@ -102,20 +93,19 @@ void display_init(void)
     };
     ESP_ERROR_CHECK(esp_lcd_new_dsi_bus(&bus_cfg, &dsi_bus));
 
-    esp_lcd_panel_io_handle_t dbi_io;
     esp_lcd_dbi_io_config_t dbi_cfg = {
         .virtual_channel = 0,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_dbi(dsi_bus, &dbi_cfg, &dbi_io));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_dbi(dsi_bus, &dbi_cfg, &s_dbi_io));
 
     esp_lcd_dpi_panel_config_t dpi_cfg = {
         .virtual_channel = 0,
         .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
         .dpi_clock_freq_mhz = DSI_DPI_CLK_MHZ,
         .pixel_format = LCD_COLOR_PIXEL_FORMAT_RGB565,
-        .num_fbs = 2,
+        .num_fbs = 1,
         .video_timing = {
             .h_size = LCD_W, .v_size = LCD_H,
             .hsync_back_porch = 50, .hsync_pulse_width = 20, .hsync_front_porch = 50,
@@ -134,7 +124,7 @@ void display_init(void)
         .bits_per_pixel = 16,
         .vendor_config = &vendor_cfg,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7703(dbi_io, &dev_cfg, &panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_st7703(s_dbi_io, &dev_cfg, &panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
@@ -146,21 +136,75 @@ void display_init(void)
     ESP_ERROR_CHECK(gpio_config(&bk_cfg));
     gpio_set_level(DSI_BK_LIGHT_GPIO, 0);
 
-    void *fb0 = NULL, *fb1 = NULL;
-    ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(panel_handle, 2, &fb0, &fb1));
-    s_fb[0] = (uint8_t *)fb0;
-    s_fb[1] = (uint8_t *)fb1;
-    memset(s_fb[0], 0, DISP_FB_SIZE);
-    memset(s_fb[1], 0, DISP_FB_SIZE);
-    s_back = 0;
-    g_backbuf = s_fb[s_back];
-
-    ESP_LOGI(TAG, "Display init: %dx%d RGB565 MIPI-DSI hw double-buffered", DISP_W, DISP_H);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Audio — ES8311 + I2S
-// ─────────────────────────────────────────────────────────────────────────
+// The GT911 as LVGL's pointer
+static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    uint16_t x, y;
+    if (touch_read(&x, &y)) {
+        data->point.x = x;
+        data->point.y = y;
+        data->state = LV_INDEV_STATE_PRESSED;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+}
+
+static esp_err_t touch_init(void);
+
+lv_display_t *board_display_start(void)
+{
+    panel_init();
+
+    lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    port_cfg.task_stack = 8192;
+    port_cfg.timer_period_ms = 5;
+    if (lvgl_port_init(&port_cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "LVGL start failed");
+        return NULL;
+    }
+    const lvgl_port_display_cfg_t disp_cfg = {
+        .io_handle = s_dbi_io,
+        .panel_handle = panel_handle,
+        .buffer_size = LCD_W * LCD_H / 4,   // Quarter-screen buffers in PSRAM
+        .double_buffer = true,
+        .hres = LCD_W,
+        .vres = LCD_H,
+        .color_format = LV_COLOR_FORMAT_RGB565,
+        .flags = {
+            .buff_dma = true,
+            .buff_spiram = true,
+        },
+    };
+    const lvgl_port_display_dsi_cfg_t dsi_cfg = { .flags = { .avoid_tearing = false } };
+    lv_display_t *disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
+    if (!disp) {
+        ESP_LOGE(TAG, "LVGL display failed");
+        return NULL;
+    }
+
+    // The GT911 shares the codec's I2C bus, which audio_init() opens; open it here first
+    if (touch_init() == ESP_OK && lvgl_port_lock(0)) {
+        lv_indev_t *indev = lv_indev_create();
+        lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(indev, touch_read_cb);
+        lv_indev_set_display(indev, disp);
+        lvgl_port_unlock();
+    }
+    board_display_brightness(100);
+    return disp;
+}
+
+void board_display_brightness(int percent)
+{
+    gpio_set_level(DSI_BK_LIGHT_GPIO, percent > 0 ? 0 : 1);   // Backlight enable is active low
+}
+
+// -------------------------------------------------------------------------
+// Audio - ES8311 + I2S
+// -------------------------------------------------------------------------
 #define I2C_SCL         GPIO_NUM_8
 #define I2C_SDA         GPIO_NUM_7
 #define I2S_MCK         GPIO_NUM_13
@@ -178,6 +222,33 @@ void display_init(void)
 #define MCLK_MULTIPLE   256
 
 static i2s_chan_handle_t s_tx_handle;
+static bool              s_i2c_ready;
+
+// The codec and the touch controller share this bus (legacy I2C driver, as es8311 uses)
+static esp_err_t i2c_bus_init(void)
+{
+    if (s_i2c_ready) {
+        return ESP_OK;
+    }
+    i2c_config_t i2c_cfg = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_SDA,
+        .scl_io_num = I2C_SCL,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_CLK_HZ,
+    };
+    esp_err_t err = i2c_param_config(I2C_PORT, &i2c_cfg);
+    if (err == ESP_OK) {
+        err = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    s_i2c_ready = true;
+    return ESP_OK;
+}
 static es8311_handle_t   s_codec;
 static int               s_sample_rate = DEFAULT_RATE;
 
@@ -190,17 +261,9 @@ esp_err_t audio_init(void)
     gpio_config(&pa_cfg);
     gpio_set_level(PA_EN, 1);
 
-    i2c_config_t i2c_cfg = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_SDA,
-        .scl_io_num = I2C_SCL,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_CLK_HZ,
-    };
-    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &i2c_cfg));
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0));
-    ESP_LOGI(TAG, "I2C master ready");
+    if (i2c_bus_init() != ESP_OK) {
+        return ESP_FAIL;
+    }
 
     s_codec = es8311_create(I2C_PORT, ES8311_ADDR);
     if (!s_codec) {
@@ -307,34 +370,10 @@ void audio_pa_enable(bool on)
     gpio_set_level(PA_EN, on ? 1 : 0);
 }
 
-void audio_test_tone(int duration_ms)
-{
-    ESP_LOGI(TAG, "Playing 440 Hz test tone for %d ms", duration_ms);
-    const int freq = 440;
-    const int rate = s_sample_rate;
-    int16_t buf[2048];
-    int total_samples = (rate * duration_ms) / 1000;
-    int phase = 0;
-    while (total_samples > 0) {
-        int chunk = 1024;
-        if (chunk > total_samples) chunk = total_samples;
-        for (int i = 0; i < chunk; i++) {
-            int16_t val = (int16_t)(16000.0f * sinf(2.0f * M_PI * freq * phase / rate));
-            buf[i * 2 + 0] = val;
-            buf[i * 2 + 1] = val;
-            phase++;
-        }
-        size_t written;
-        i2s_channel_write(s_tx_handle, buf, chunk * 4, &written, 1000);
-        total_samples -= chunk;
-    }
-    ESP_LOGI(TAG, "Test tone done");
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Touch — GT911 raw read (gesture logic lives in touch.c)
+// -------------------------------------------------------------------------
+// Touch - GT911 read for LVGL's pointer input
 // Direct I2C using legacy driver; v1 doesn't handle GT911's 16-bit reg addr.
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 #define GT911_ADDR       0x5D
 #define GT911_ADDR_ALT   0x14
 #define GT911_PRODUCT_ID 0x8140
@@ -381,8 +420,11 @@ static esp_err_t gt911_write_byte(uint16_t reg, uint8_t val)
     return ret;
 }
 
-esp_err_t board_touch_init(void)
+static esp_err_t touch_init(void)
 {
+    if (i2c_bus_init() != ESP_OK) {
+        return ESP_FAIL;
+    }
     const uint8_t addrs[] = { GT911_ADDR, GT911_ADDR_ALT };
     for (int a = 0; a < 2; a++) {
         s_gt911_addr = addrs[a];
@@ -404,7 +446,7 @@ esp_err_t board_touch_init(void)
     return ESP_FAIL;
 }
 
-bool board_touch_read(uint16_t *x, uint16_t *y)
+static bool touch_read(uint16_t *x, uint16_t *y)
 {
     if (!s_gt911_addr) return false;
 
@@ -429,14 +471,14 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
             uint16_t raw_y = point[3] | (point[4] << 8);
             uint16_t px, py;
             if (s_gt911_x_res > 0 && s_gt911_y_res > 0 &&
-                (s_gt911_x_res != DISP_W || s_gt911_y_res != DISP_H)) {
-                px = (uint16_t)((uint32_t)raw_x * DISP_W / s_gt911_x_res);
-                py = (uint16_t)((uint32_t)raw_y * DISP_H / s_gt911_y_res);
+                (s_gt911_x_res != LCD_W || s_gt911_y_res != LCD_H)) {
+                px = (uint16_t)((uint32_t)raw_x * LCD_W / s_gt911_x_res);
+                py = (uint16_t)((uint32_t)raw_y * LCD_H / s_gt911_y_res);
             } else {
                 px = raw_x; py = raw_y;
             }
-            if (px >= DISP_W) px = DISP_W - 1;
-            if (py >= DISP_H) py = DISP_H - 1;
+            if (px >= LCD_W) px = LCD_W - 1;
+            if (py >= LCD_H) py = LCD_H - 1;
             s_last_x = px; s_last_y = py;
             s_last_down = true;
         }

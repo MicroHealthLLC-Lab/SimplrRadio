@@ -10,6 +10,7 @@
 #include "spectrum.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "dsps_fft2r.h"
 #include "dsps_wind_hann.h"
@@ -28,6 +29,7 @@ static int   s_pcm_pos = 0;
 static float s_bands[SPECTRUM_BANDS];
 static float s_peaks[SPECTRUM_BANDS];
 static SemaphoreHandle_t s_mutex;
+static TickType_t s_last_fft;      // When bands were last computed
 
 // Log-spaced band edges for 32 bands spanning FFT bins 1..N/2
 // Each band covers an exponentially wider range of bins.
@@ -92,7 +94,7 @@ static void run_fft(void)
         // Convert to dB-ish scale (0..1 range)
         // 20*log10(sum) mapped to roughly 0..1 for typical audio levels
         if (sum > 1e-6f) {
-            sum = 1.0f + (log10f(sum) / 3.5f);  // ~70dB range → 0..1
+            sum = 1.0f + (log10f(sum) / 3.5f);  // ~70dB range -> 0..1
             if (sum < 0) sum = 0;
             if (sum > 1.0f) sum = 1.0f;
         } else {
@@ -117,6 +119,7 @@ static void run_fft(void)
             s_peaks[b] *= 0.97f;
         }
     }
+    s_last_fft = xTaskGetTickCount();
     xSemaphoreGive(s_mutex);
 }
 
@@ -134,12 +137,22 @@ void spectrum_feed(const int16_t *samples, int num_stereo_samples)
     }
 }
 
-const float *spectrum_get_bands(void)
+void spectrum_snapshot(float *bands, float *peaks)
 {
-    return s_bands;
-}
-
-const float *spectrum_get_peaks(void)
-{
-    return s_peaks;
+    if (!s_mutex) {
+        memset(bands, 0, sizeof(float) * SPECTRUM_BANDS);
+        memset(peaks, 0, sizeof(float) * SPECTRUM_BANDS);
+        return;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // No audio for a moment (muted, paused, station changing): let the bars fall
+    if (xTaskGetTickCount() - s_last_fft > pdMS_TO_TICKS(150)) {
+        for (int b = 0; b < SPECTRUM_BANDS; b++) {
+            s_bands[b] *= 0.80f;
+            s_peaks[b] *= 0.92f;
+        }
+    }
+    memcpy(bands, s_bands, sizeof(s_bands));
+    memcpy(peaks, s_peaks, sizeof(s_peaks));
+    xSemaphoreGive(s_mutex);
 }

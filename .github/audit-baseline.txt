@@ -1,0 +1,20 @@
+# Reviewed vulnerabilities the Tests workflow's audit job accepts (check_audit.py).
+# One per line: <CVE id> <package> <reason>. Anything HIGH/CRITICAL and not listed here
+# fails the audit, as does any listed CVE that appears in CISA's Known Exploited list.
+# Remove a line as soon as the fix ships (the audit warns when a listed CVE is gone).
+#
+# 2026-10-20: carried over from SimplrSSH, which builds with the same ESP-IDF v5.5.1 and
+# its bundled mbedTLS 3.6.4. The fix is moving to a newer ESP-IDF release, which changes the
+# whole firmware and must be tested on a Tab5 and a Waveshare board. Not yet assessed for
+# reachability here (TLS client only: the station directory, streams and sign-in pages).
+CVE-2026-34877 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2026-34875 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2026-34872 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2026-34873 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2026-34874 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2026-34876 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2026-25833 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2026-25835 mbed_tls pending ESP-IDF upgrade (bundled mbedTLS 3.6.4)
+CVE-2025-66409 esp-idf pending ESP-IDF upgrade (v5.5.1)
+CVE-2025-68473 esp-idf pending ESP-IDF upgrade (v5.5.1)
+CVE-2025-68474 esp-idf pending ESP-IDF upgrade (v5.5.1)

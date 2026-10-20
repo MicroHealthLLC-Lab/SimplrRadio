@@ -1,7 +1,6 @@
-// Copyright 2025 David M. King
 // SPDX-License-Identifier: Apache-2.0
 //
-// ES8311 codec + I2S driver for audio output
+// Audio output, implemented by the board file: 16-bit stereo PCM to the board's codec.
 
 #pragma once
 
@@ -10,22 +9,26 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-// Initialize I2C, ES8311 codec, I2S TX channel, and PA.
-// Default: 44100 Hz, 16-bit stereo.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Codec and I2S at 44100 Hz, 16-bit stereo. After board_init_power().
 esp_err_t audio_init(void);
 
-// Write interleaved 16-bit stereo PCM to I2S.
-esp_err_t audio_write(const int16_t *samples, size_t num_samples,
-                      size_t *samples_written, uint32_t timeout_ms);
+// Interleaved 16-bit stereo PCM (num_samples counts both channels)
+esp_err_t audio_write(const int16_t *samples, size_t num_samples, size_t *samples_written,
+                      uint32_t timeout_ms);
 
-// Reconfigure sample rate (e.g. 22050, 44100, 48000).
+// The stream's sample rate (e.g. 22050, 44100, 48000)
 esp_err_t audio_set_sample_rate(int rate);
 
-// Set volume 0–100.
+// Volume 0-100
 esp_err_t audio_set_volume(int vol);
 
-// Enable/disable power amplifier.
+// false mutes the output (the speaker and, where there is one, the headphone jack)
 void audio_pa_enable(bool on);
 
-// Play a 440 Hz test tone for the given duration (ms). Blocking.
-void audio_test_tone(int duration_ms);
+#ifdef __cplusplus
+}
+#endif

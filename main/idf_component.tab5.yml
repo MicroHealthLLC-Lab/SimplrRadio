@@ -1,12 +1,14 @@
+## M5Stack Tab5 dependencies (copied to main/idf_component.yml at configure time; see CMakeLists.txt).
+## Direct dependencies are pinned to exact versions: the component manager re-solves on a clean
+## build and would otherwise pick up untested releases.
 dependencies:
-  idf: ">=5.3"
-  # Match the C6 slave firmware (v2.12.3) on the host side. The older 2.12.0
-  # boot assert (esp_startup_start_app) is fixed by 2.12.3 — verified on the P4
-  # via esp32-terminal, which runs this exact set.
-  espressif/esp_hosted: "==2.12.3"
-  espressif/esp_wifi_remote: "==1.5.0"
-  chmorgan/esp-libhelix-mp3: "*"
-  espressif/esp-dsp: ">=0.3.0"
-  # M5Stack Tab5: ES8388 codec via esp_codec_dev, ST7123 capacitive touch.
-  espressif/esp_codec_dev: ">=1.0.0"
-  espressif/esp_lcd_touch_st7123: ">=1.0.0"
+  idf: '~5.5.1'
+  # Display (ILI9881C / ST7123 / ST7121 panels, detected at boot), touch, IO expanders, ES8388
+  espressif/m5stack_tab5: '==1.3.1'
+  lvgl/lvgl: '==9.6.0~1'   # As SimplrSSH's Tab5 release builds (the resolver lifts 9.4.0 to it)
+  espressif/esp_lvgl_port: '==2.8.0~1'   # 2.9.0 needs a MIPI-DSI callback that ESP-IDF 5.5.1 lacks
+  # WiFi through the ESP32-C6 co-processor; matches the bundled C6 firmware (slave_fw/, v2.12.3)
+  espressif/esp_hosted: '==2.12.3'
+  espressif/esp_wifi_remote: '==1.5.0'
+  chmorgan/esp-libhelix-mp3: '==1.0.3'
+  espressif/esp-dsp: '==1.8.2'

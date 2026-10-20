@@ -1,0 +1,39 @@
+# Reports outdated ESP-IDF components and ESP-IDF itself. Report only: it never
+# fails a build. Runs weekly and whenever the pinned versions change.
+name: Dependency check
+
+on:
+  schedule:
+    - cron: '0 13 * * 1'  # Mondays 13:00 UTC
+  push:
+    branches: [main, integration]
+    paths:
+      - 'dependencies.lock.tab5'
+      - 'dependencies.lock.waveshare'
+      - 'main/idf_component.*.yml'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'dependencies.lock.tab5'
+      - 'dependencies.lock.waveshare'
+      - 'main/idf_component.*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  outdated:
+    name: Outdated libraries
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Check for newer versions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/check_outdated.py

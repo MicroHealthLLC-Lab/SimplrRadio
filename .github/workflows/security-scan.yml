@@ -1,0 +1,46 @@
+name: Security scan
+# MicroHealth's one security workflow (MicroHealthLLC/sast-rules,
+# security-scan.yml): SAST (Opengrep with MicroHealth's rules), Trivy
+# (dependencies, secrets, misconfiguration), the CycloneDX SBOM and ZAP DAST,
+# in parallel, ending in ONE report (the `security-report` artifact). Every
+# scanner is on; switch one off with its input (`sast: false`, `trivy: false`,
+# `sbom: false`, `zap: false`). It sits beside the Tests workflow (the release
+# gate, with its firmware CVE audit); it does not gate releases.
+#
+# Called @main, not pinned: sast-rules' main IS its release branch (every
+# scan change pushed to main is released) and its workflows resolve their own
+# rules from the commit they run at, so every run uses the newest release with
+# no pin to move. The one exception to SHA pinning, by the owner's decision
+# (test/guards/test_supply_chain.py, SAST_RULES_AT_MAIN). scripts/sast.sh
+# resolves @main the same way, so a local scan runs the same rules.
+#
+# Needs: vars.AWS_REGION_EAST_1, secrets.AWS_ROLE (OIDC; pulls MicroHealth's
+# FIPS images from ECR, writes the bucket), vars.SECURITY_REPORTS_S3_BUCKET
+# (empty: reports stay artifacts only) and vars.ZAP_TARGET_URL (empty: ZAP is
+# recorded as not run, with the reason; the run does not fail). Only a full
+# scan of the default branch is uploaded; a pull request's stays an artifact.
+on:
+  push:
+    # main is the default branch (every push to it is a release): its full
+    # scans feed Tueri Core; integration's go under _branch-scans/.
+    branches: [main, integration]
+  pull_request:
+  schedule:
+    # Daily — 10:30 PM US Eastern (EDT) = 02:30 UTC the next day
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  security:
+    permissions: {contents: read, actions: read, security-events: write, id-token: write}
+    uses: MicroHealthLLC/sast-rules/.github/workflows/security-scan.yml@main # newest sast-rules release (main is its release branch)
+    with:
+      aws_region: ${{ vars.AWS_REGION_EAST_1 }}
+      s3_bucket: ${{ vars.SECURITY_REPORTS_S3_BUCKET }}
+      zap_target: ${{ vars.ZAP_TARGET_URL }}
+      baseline_ref: ${{ github.base_ref }}
+    secrets: inherit

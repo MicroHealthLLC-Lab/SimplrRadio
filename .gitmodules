@@ -1,3 +1,0 @@
-[submodule "components/wifi_prov"]
-	path = components/wifi_prov
-	url = ../esp32-wifi-prov.git
