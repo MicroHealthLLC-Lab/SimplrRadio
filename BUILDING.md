@@ -88,6 +88,12 @@ The same pipelines as SimplrSSH, on `main` and `integration`:
 Work lands on `integration`; `main` is updated from it by pull request. Make "Tests" a
 required check on both branches.
 
+The release job tags the commit it built. GitHub doesn't let a workflow token tag a commit whose
+workflow files differ from the ones on `main`, so if a pull request that changes
+`.github/workflows/` (a Dependabot action bump) is merged while a release is still running,
+that release is refused; the release for the newer `main` commit then publishes the version.
+Merge workflow updates once a release has finished.
+
 ## Architecture
 
 ```
