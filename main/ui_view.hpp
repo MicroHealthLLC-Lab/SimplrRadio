@@ -77,6 +77,7 @@ public:
     void show_now_playing();
     bool now_playing_shown() const { return np && !lv_obj_is_hidden(np); }
     void update_now_playing(const NowPlaying& state);
+    void set_list_button(const char* word);   // What the List button opens: "Stations", "Songs"
 
     std::function<void(int row)> on_tap;      // A row was tapped
     std::function<void()> on_back;            // Back arrow, or the keyboard's close key
@@ -109,6 +110,8 @@ private:
     lv_obj_t* np_spectrum = NULL;
     lv_obj_t* np_mute_label = NULL;
     lv_obj_t* np_pause_label = NULL;
+    lv_obj_t* np_list_label = NULL;
+    bool np_wide = false;                     // Buttons have words next to their icons
     lv_timer_t* spectrum_timer = NULL;
 
     bool page_shown() const { return page && !lv_obj_is_hidden(page); }

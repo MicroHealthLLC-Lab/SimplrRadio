@@ -15,7 +15,7 @@ SRC = {name: repo.strip_comments(text) for name, text in repo.sources().items()}
 RAW = repo.sources()   # For string literals: strip_comments() also cuts "http://..." at its "//"
 ALLOWED_HOSTS = {"connectivitycheck.gstatic.com", "api.radio-browser.info", "de1.api.radio-browser.info",
                  "de2.api.radio-browser.info", "fi1.api.radio-browser.info", "at1.api.radio-browser.info",
-                 "example.com", "github.com", "espressif.github.io"}
+                 "musicbrainz.org", "example.com", "github.com", "espressif.github.io"}
 PROBE = '"http://connectivitycheck.gstatic.com/generate_204"'
 
 
@@ -68,12 +68,24 @@ class SourceSurface(unittest.TestCase):
     def test_directory_over_https(self):
         self.assertIn('"https://%s%s&limit=%d"', RAW["main/radio_browser.c"])
 
+    def test_music_genres_over_https_with_only_the_artist(self):
+        online = RAW["main/music_online.c"]
+        urls = re.findall(r'"(https?://[^"]+)"', online)
+        self.assertTrue(urls)
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertTrue(url.startswith("https://musicbrainz.org/ws/2/artist/"))
+        # Off when the user turns it off, and only for songs without a genre
+        app = SRC["main/app.cpp"]
+        self.assertIn("!music::settings().online", app)
+        self.assertIn("next_without_genre(", app)
+
     def test_streams_only_web_urls(self):
         self.assertIn('strncasecmp(url, "http://", 7)', RAW["main/stream.c"])
         self.assertIn("web_url(url->valuestring)", SRC["main/radio_browser.c"])
 
     def test_tls_verified_with_ca_bundle(self):
-        for client in ("main/portal_client.cpp", "main/radio_browser.c", "main/stream.c"):
+        for client in ("main/portal_client.cpp", "main/radio_browser.c", "main/stream.c", "main/music_online.c"):
             with self.subTest(file=client):
                 self.assertRegex(SRC[client], r"crt_bundle_attach\s*=\s*esp_crt_bundle_attach")
         for name, code in SRC.items():

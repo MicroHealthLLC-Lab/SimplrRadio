@@ -8,12 +8,14 @@ endif()
 if(BOARD STREQUAL "tab5")
     # WiFi through the ESP32-C6 co-processor (esp_hosted over SDIO)
     set(BOARD_SRCS "board_m5stack_tab5.c" "tab5_keyboard.c" "tab5_keymap.c")
-    set(BOARD_REQUIRES espressif__m5stack_tab5 esp_driver_i2c esp_hosted)
+    # SD card on SDMMC slot 0
+    set(BOARD_REQUIRES espressif__m5stack_tab5 esp_driver_i2c esp_hosted esp_driver_sdmmc)
 else()
     # LilyGO T-Deck: WiFi built into the ESP32-S3
     set(BOARD_SRCS "board_tdeck.c" "tdeck_keyboard.c" "tdeck_keymap.c")
+    # SD card on the display's SPI bus
     set(BOARD_REQUIRES espressif__esp_bsp_generic espressif__esp_lcd_touch_gt911 esp_driver_i2c
-                       esp_driver_i2s esp_driver_gpio)
+                       esp_driver_i2s esp_driver_gpio esp_driver_sdspi)
 endif()
 
 idf_component_register(
@@ -25,7 +27,12 @@ idf_component_register(
         "hid_keymap.c"
         "hid_report.c"
         "lv_mem_psram.c"
+        "media_tags.c"
         "mp3_decoder.c"
+        "music_decoder.c"
+        "music_library.cpp"
+        "music_online.c"
+        "music_player.cpp"
         "player.c"
         "portal.cpp"
         "portal_client.cpp"
@@ -55,11 +62,14 @@ idf_component_register(
         esp_timer
         esp_wifi
         esp-tls
+        fatfs
         json
+        sdmmc
         lvgl__lvgl
         espressif__esp_lvgl_port
         espressif__esp-dsp
         chmorgan__esp-libhelix-mp3
+        espressif__esp_audio_codec
         mbedtls
         nvs_flash
         ${BOARD_REQUIRES}

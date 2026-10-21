@@ -34,6 +34,15 @@ const char *board_wifi_firmware(void);
 esp_err_t board_bt_prepare(void);
 void board_bt_release(void);
 
+// The microSD card (FAT32, long file names), for the music library. Blocking: worker task.
+// ESP_OK once it is mounted at board_sd_root() (or already was); an error without a card or
+// with one that isn't FAT. Tab5: SDMMC slot 0 (the C6 keeps slot 1). T-Deck: SPI, on the
+// display's bus (chip select GPIO 39).
+esp_err_t board_sd_mount(void);
+void board_sd_unmount(void);
+bool board_sd_mounted(void);
+const char *board_sd_root(void);   // "/sdcard"
+
 // Display, touch (an LVGL pointer input) and backlight; LVGL is running when it returns.
 // All LVGL calls from other tasks must hold the display lock (lvgl_port_lock).
 lv_display_t *board_display_start(void);

@@ -20,8 +20,13 @@ and how to reproduce it.
   ASCII before they are shown.
 - **Outbound connections only:** the Radio Browser directory (HTTPS, certificates verified
   with ESP-IDF's CA bundle), the radio streams it lists (HTTP or HTTPS, audio only), the
-  captive-portal probe `http://connectivitycheck.gstatic.com/generate_204` and the sign-in
-  pages a network serves.
+  captive-portal probe `http://connectivitycheck.gstatic.com/generate_204`, the sign-in
+  pages a network serves and, for songs on the SD card whose files have no genre,
+  `https://musicbrainz.org/ws/2/` (verified with the CA bundle; `main/music_online.c`). That
+  lookup sends the artist's name and nothing else (with a User-Agent naming the firmware and
+  its version, as MusicBrainz asks), one artist at a time, at most a request a second, and only
+  while the radio is on WiFi; **Music** > **Settings** turns it off. Replies are bounded (32 KB)
+  and cleaned to printable ASCII.
 - **No firmware updates of any kind.** Nothing is flashed over the network, and the Tab5's
   ESP32-C6 WiFi chip keeps the firmware it shipped with.
 
@@ -37,6 +42,15 @@ and how to reproduce it.
   access point supports it.
 - Sign-in pages are untrusted input: size-bounded, no scripts, cookies in RAM only, wiped when
   the sign-in ends. Nothing typed into a page is saved.
+- **Files on the SD card are untrusted input** (anyone can write a card). Tags are read by
+  `main/media_tags.c`, which checks every size against the file and fixed bounds (512-byte
+  values, 4 KB comment blocks, bounded box / frame / page counts and nesting); it is host-tested
+  with every truncation of valid files and thousands of random ones under AddressSanitizer. The
+  library's index files (`/.simplrradio/` on the card) are checked before use (magic, version,
+  record size, count, CRC-32, the folder they were made for); a record whose path is absolute,
+  contains `..` or control characters, or names an unknown format is dropped, and their text
+  is made printable. The decoders are Espressif's `esp_audio_codec`. The card is never
+  formatted, and nothing on it is written except the radio's own `/.simplrradio/` folder.
 - **Bluetooth bonding keys** are kept in the same encrypted vault as the WiFi passwords
   (`main/bt_store.cpp`); NimBLE keeps no copy in flash (`CONFIG_BT_NIMBLE_NVS_PERSIST=n`).
   Forgetting a device deletes its keys. Pairing codes and typed keys are never logged.
@@ -99,3 +113,20 @@ code was changed so the patterns are gone, and the same rules and Opengrep now r
 | `memcpy` of bonding keys into and out of the vault record (`bt_hid.cpp`, 4 findings) | The record's length was checked before reading. Now built with `std::string::append` and read with `std::string::copy`, which check the bounds |
 | `memcpy` of an advertised device name (`bt_hid.cpp`) | Clamped to the buffer the line before. Now a `std::string` of at most 31 bytes |
 | `memset` on the HID report map, fields, local items and decoded input (`hid_report.c`, 5 findings) | None held a secret, and each is read right after, so it can't be optimized away. Replaced by struct assignments |
+
+### SAST review (2026-10-21, music player)
+
+The music player's new code was scanned with the same rules and Opengrep before it was
+committed. Its first draft had 18 findings; the code was changed and the scan reports 0:
+
+| Finding | Outcome |
+|---|---|
+| `snprintf` with a format from a macro (`music_online.c`, 2 findings) | The two MusicBrainz URL formats are now literals at the call |
+| `strlen` on tag and path text (`media_tags.c`, 10 findings) | Each is `strnlen` with the size of the buffer it reads (two suppressed ones elsewhere in the new code too) |
+| `atoi` on ID3 genre numbers (`media_tags.c`, 2 findings) | `strtol` on a string checked to be 1 to 3 digits |
+| `fopen` (time of check / time of use, `music_player.cpp`, `music_decoder.c`, 4 findings) | Suppressed with the reason: FAT on the SD card has no links, owners or permissions to swap between a check and the open, and there is no other way to open a file |
+
+The one `memcpy` in the new code (a MusicBrainz reply chunk, suppressed as in `radio_browser.c`)
+is a byte loop under the same bound check instead, so no new code relies on a suppressed
+buffer rule.
+

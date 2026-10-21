@@ -43,6 +43,16 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.8.2
+  espressif/esp_audio_codec:
+    component_hash: 16e2880dbdd5a72264051f750f33a6e5a38fd25621c83e3a32a85a152d2d2643
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.0
   espressif/esp_bsp_generic:
     component_hash: 8445d95cf246aae6afe83197cd84b9fbfe17ef443ffd0bab23a855508a6cf820
     dependencies:
@@ -283,12 +293,13 @@ direct_dependencies:
 - chmorgan/esp-libhelix-mp3
 - espressif/button
 - espressif/esp-dsp
+- espressif/esp_audio_codec
 - espressif/esp_bsp_generic
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_port
 - espressif/led_strip
 - idf
 - lvgl/lvgl
-manifest_hash: fe0bacce7681d5fab668da3fae75fa155ec8eb163c1159a4abffaf40762f7abe
+manifest_hash: add9ada5a1a6bee0c2ef03f7921080321989c1ffb1ef5e276ad35493eb5c860c
 target: esp32s3
 version: 2.0.0

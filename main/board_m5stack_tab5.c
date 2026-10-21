@@ -12,6 +12,8 @@
 //   Power   : two PI4IOE5V6408 IO expanders: speaker amp, side-port 5 V, ESP32-C6 power, charger
 //   WiFi    : the ESP32-C6 co-processor over SDIO (esp_hosted + esp_wifi_remote); Bluetooth LE
 //             through it too (esp_hosted HCI, NimBLE on the P4)
+//   SD card : microSD on SDMMC slot 0 (4-bit), powered by the P4's LDO channel 4; the C6 is on
+//             slot 1 of the same controller
 
 #include <stdio.h>
 #include <string.h>
@@ -27,6 +29,11 @@
 #include "esp_codec_dev.h"
 #include "dsps_biquad.h"
 #include "dsps_biquad_gen.h"
+
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "driver/sdmmc_host.h"
+#include "sd_pwr_ctrl_by_on_chip_ldo.h"
 
 #include "esp_hosted.h"
 #include "esp_hosted_bt_host_stack.h"
@@ -195,6 +202,60 @@ void board_bt_release(void)
 {
     esp_hosted_bt_host_stack_teardown();
 }
+
+// -- SD card --------------------------------------------------------------
+// The BSP's slot settings, mounted here rather than with bsp_sdcard_mount(): that one creates
+// the card's LDO each time and leaks it when there is no card, so a second try always failed.
+// The controller is shared with esp_hosted (the C6 on slot 1): ESP-IDF 5.5 skips a second host
+// init, and an unmount or a failed mount releases slot 0 only (SDMMC_HOST_DEFAULT's deinit_p),
+// so the WiFi link is never reset. Default speed (20 MHz): plenty for audio.
+static sdmmc_card_t *s_card;
+static sd_pwr_ctrl_handle_t s_sd_ldo;
+
+esp_err_t board_sd_mount(void)
+{
+    if (s_card) {
+        return ESP_OK;
+    }
+    if (!s_sd_ldo) {
+        sd_pwr_ctrl_ldo_config_t ldo = {
+            .ldo_chan_id = 4,
+        };
+        esp_err_t err = sd_pwr_ctrl_new_on_chip_ldo(&ldo, &s_sd_ldo);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "SD card power (LDO 4) failed");
+            return err;
+        }
+    }
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.slot = SDMMC_HOST_SLOT_0;
+    host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+    host.pwr_ctrl_handle = s_sd_ldo;
+    sdmmc_slot_config_t slot;
+    bsp_sdcard_sdmmc_get_slot(SDMMC_HOST_SLOT_0, &slot);
+    const esp_vfs_fat_sdmmc_mount_config_t mount = {
+        .format_if_mount_failed = false,   // Never erase someone's card
+        .max_files = 4,
+        .allocation_unit_size = 16 * 1024,
+    };
+    esp_err_t err = esp_vfs_fat_sdmmc_mount(BSP_SD_MOUNT_POINT, &host, &slot, &mount, &s_card);
+    if (err != ESP_OK) {
+        s_card = NULL;
+        ESP_LOGW(TAG, "No SD card (%s)", esp_err_to_name(err));
+    }
+    return err;
+}
+
+void board_sd_unmount(void)
+{
+    if (s_card) {
+        esp_vfs_fat_sdcard_unmount(BSP_SD_MOUNT_POINT, s_card);
+        s_card = NULL;
+    }
+}
+
+bool board_sd_mounted(void) { return s_card != NULL; }
+const char *board_sd_root(void) { return BSP_SD_MOUNT_POINT; }
 
 // -- Keyboard -------------------------------------------------------------
 esp_err_t board_keyboard_init(void) { return tab5_keyboard_init(); }

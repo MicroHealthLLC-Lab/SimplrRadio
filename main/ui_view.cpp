@@ -602,6 +602,7 @@ void UiView::create_now_playing()
     const board_ui_t* ui = board_ui();
     int32_t w = lv_obj_get_width(screen);
     bool wide = w >= 1000;
+    np_wide = wide;
 
     np = plain_obj(screen);
     lv_obj_set_size(np, w, lv_obj_get_height(screen) - ui->bar_h);
@@ -656,6 +657,8 @@ void UiView::create_now_playing()
             np_mute_label = l;
         } else if (i == NP_PAUSE) {
             np_pause_label = l;
+        } else if (i == NP_STATIONS) {
+            np_list_label = l;
         }
     }
 
@@ -693,6 +696,16 @@ void UiView::update_now_playing(const NowPlaying& s)
     lv_obj_set_style_text_color(np_status, lv_color_hex(s.status_warn ? theme::WARN : theme::DIM), 0);
     set_text(np_mute_label, s.muted ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
     set_text(np_pause_label, s.paused ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
+}
+
+void UiView::set_list_button(const char* word)
+{
+    std::string text = LV_SYMBOL_LIST;
+    if (np_wide && word && word[0]) {
+        text += "  ";
+        text += word;
+    }
+    set_text(np_list_label, text.c_str());
 }
 
 void UiView::spectrum_timer_cb(lv_timer_t* t)

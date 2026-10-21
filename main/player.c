@@ -5,6 +5,7 @@
 #include "player.h"
 #include "audio.h"
 #include "mp3_decoder.h"
+#include "music_player.h"
 #include "settings.h"
 #include "spectrum.h"
 #include "stream.h"
@@ -30,6 +31,7 @@ static int s_pending = -1;            // Debounced tune, -1 = none
 static TickType_t s_pending_tick;
 static bool s_wanted;                 // A stream should be playing
 static bool s_paused;                 // The user paused (survives WiFi drops and list reloads)
+static bool s_hold;                   // Boot: music may resume, don't start the radio yet
 static int s_retries;
 static TickType_t s_dead_since;       // 0 = alive
 static player_status_t s_status = PLAYER_IDLE;
@@ -144,8 +146,8 @@ void player_set_stations(const radio_station_t *list, int count)
     s_status = s_paused ? PLAYER_PAUSED : PLAYER_IDLE;
     s_wanted = false;
     changed();
-    if (start >= 0 && s_paused) {
-        s_index = start;   // Shown, and played on Play
+    if (start >= 0 && (s_paused || s_hold || music_active())) {
+        s_index = start;   // Shown, and played on Play (or when music ends)
     } else if (start >= 0) {
         s_retries = 0;
         commit(start);
@@ -177,7 +179,9 @@ void player_select(int index)
 
 void player_step(int delta)
 {
-    if (s_count > 0) {
+    if (music_active()) {
+        music_step(delta);
+    } else if (s_count > 0) {
         int from = s_index < 0 ? 0 : s_index;
         player_select(((from + delta) % s_count + s_count) % s_count);
     }
@@ -185,6 +189,9 @@ void player_step(int delta)
 
 void player_stop(void)
 {
+    if (music_active()) {
+        return;   // Songs from the card don't need WiFi
+    }
     s_pending = -1;
     if (s_wanted) {
         halt();
@@ -196,7 +203,7 @@ void player_stop(void)
 
 void player_resume(void)
 {
-    if (s_index >= 0 && s_pending < 0 && !s_paused) {
+    if (s_index >= 0 && s_pending < 0 && !s_paused && !s_hold && !music_active()) {
         s_retries = 0;
         commit(s_index);
     }
@@ -204,6 +211,10 @@ void player_resume(void)
 
 void player_pause(void)
 {
+    if (music_active()) {
+        music_pause();
+        return;
+    }
     if (s_paused || s_index < 0) {
         return;
     }
@@ -220,6 +231,10 @@ void player_pause(void)
 
 void player_play(void)
 {
+    if (music_active()) {
+        music_play();
+        return;
+    }
     if (!s_paused) {
         return;
     }
@@ -229,7 +244,26 @@ void player_play(void)
     player_resume();
 }
 
-bool player_paused(void) { return s_paused; }
+bool player_paused(void) { return music_active() ? music_paused() : s_paused; }
+
+void player_release(void)
+{
+    s_pending = -1;
+    s_hold = false;
+    if (s_wanted) {
+        halt();
+        s_wanted = false;
+    }
+    s_paused = false;
+    s_status = PLAYER_IDLE;
+    clear_title();
+    changed();
+}
+
+void player_set_hold(bool hold)
+{
+    s_hold = hold;
+}
 
 void player_tick(void)
 {
@@ -243,8 +277,14 @@ void player_tick(void)
         if (now - s_pending_tick >= pdMS_TO_TICKS(TUNE_DEBOUNCE_MS)) {
             int index = s_pending;
             s_pending = -1;
+            music_leave();   // A station was picked: the radio takes over
+            s_hold = false;
             commit(index);
         }
+        return;
+    }
+    if (music_active()) {
+        music_tick();
         return;
     }
     if (!s_wanted) {
@@ -284,7 +324,7 @@ void player_tick(void)
     }
 }
 
-player_status_t player_status(void) { return s_status; }
+player_status_t player_status(void) { return music_active() ? (player_status_t)music_status() : s_status; }
 
 void player_title(char *buf, size_t len)
 {
@@ -325,4 +365,4 @@ void player_set_muted(bool muted)
     }
 }
 
-uint32_t player_version(void) { return s_version; }
+uint32_t player_version(void) { return s_version + music_version(); }
