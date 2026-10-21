@@ -2,7 +2,8 @@
 
 An internet radio for the **M5Stack Tab5** (with or without its keyboard) and the
 **LilyGO T-Deck**. Join WiFi on the screen, pick from popular stations near you, and listen,
-with the station, the song and a live spectrum on the display.
+with the station, the song and a live spectrum on the display. A Bluetooth keyboard or media
+remote can work it too.
 
 > SimplrRadio is a fork of [**esp32-p4-webradio**](https://github.com/dmatking/esp32-p4-webradio)
 > by [David M. King (@dmatking)](https://github.com/dmatking). Thanks to him for the original
@@ -58,7 +59,8 @@ WiFi up on the screen as below. Settings from 1.x aren't carried over.
 ## Configure
 
 The radio starts by joining WiFi, then plays. The bar at the top shows the page's title and,
-on the right, the volume and a WiFi icon (red while WiFi is off). Every menu is a list of rows:
+on the right, the volume, a Bluetooth icon while a Bluetooth keyboard or remote is connected,
+and a WiFi icon (red while WiFi is off). Every menu is a list of rows:
 
 - **Tab5 Keyboard**: Up / Down to move, Enter (or Right) to open.
 - **T-Deck**: roll the trackball up / down to move, press it (or roll right) to open.
@@ -86,21 +88,24 @@ Enter (or the on-screen keyboard's check mark).
    Texas, US.
 
 The **Menu**: **1 Stations**, **2 WiFi** (scan and connect, saved networks, forget,
-disconnect, sign in), **3 Station search**, **4 Sign in to this network** and **5 About**
-(versions, WiFi, memory).
+disconnect, sign in), **3 Station search**, **4 Sign in to this network**, **5 Bluetooth**
+(keyboards and remotes) and **6 About** (versions, WiFi, Bluetooth, memory).
 
-Saved WiFi passwords are encrypted on the device.
+Saved WiFi passwords and Bluetooth pairing keys are encrypted on the device.
 
 ## Use
 
 - **Now Playing** shows the station, the song (when the station sends it), the station's
   number, bitrate and genre, and a live spectrum. The buttons along the bottom: **Menu**,
-  previous, mute, next, volume down / up, **Stations**.
+  previous, **pause / play**, next, mute, volume down / up, **Stations**.
+- **Stop the radio**: the pause button, Space or P (or Play/Pause on a Bluetooth remote)
+  stops the stream; it stays stopped, even if WiFi drops and comes back, until you press play
+  again or pick a station.
 - **Change station**: the previous / next buttons, swipe left / right, Left / Right on the
   keyboard or trackball, or pick one from **Stations**. Type a station's number and Enter to
   jump to it. Paging quickly through stations only starts the one you stop on.
 - **Volume**: the buttons, swipe up / down, or Up / Down on the keyboard or trackball. Mute
-  with the button or Space / M. The volume and the last station are remembered.
+  with the button or M. The volume and the last station are remembered.
 - **Headphones** (Tab5): plugging them in turns the speaker off and adds a little bass;
   unplugging turns it back on. Mute silences both.
 - **A station that won't play** (some only stream to their own region) shows *unavailable*:
@@ -114,13 +119,32 @@ Saved WiFi passwords are encrypted on the device.
   with **Menu** → **4 Sign in to this network**. Nothing from the page is saved, and pages
   that need JavaScript can't work - accept on your phone and use its hotspot instead.
 
+### Bluetooth keyboards and remotes
+
+Both devices connect to **Bluetooth LE** keyboards, media remotes and page-turner clickers.
+Their keys work the radio: Play/Pause, next / previous, volume and mute on every screen, and
+arrows, Enter, Esc and typing in the menus (WiFi passwords too).
+
+1. **Menu** → **5 Bluetooth** → **1 Bluetooth** turns it on (it stays on after a restart).
+2. **2 Pair a keyboard or remote**, put the device in pairing mode, and pick it from the
+   list. A keyboard may be asked to type a 6-digit code shown on the screen, then Enter.
+3. From then on it connects by itself whenever it is switched on near the radio. Pick it in
+   the Bluetooth page to forget it. Up to four devices are remembered, one is connected at a
+   time.
+
+Both radios are Bluetooth LE only (the T-Deck's ESP32-S3, and the Tab5's ESP32-C6): **Bluetooth
+headphones and speakers can't connect**, as they need Classic Bluetooth. While Bluetooth is on,
+WiFi shares the antenna with it. On the Tab5, Bluetooth needs the C6's own firmware to include
+its Bluetooth controller; if it doesn't, the page says Bluetooth didn't start.
+
 ### Tab5 keyboard
 
 | Keys | Does |
 |---|---|
 | Left / Right | Previous / next station (in a text field: move the cursor) |
 | Up / Down | Volume up / down; move the highlight in a menu |
-| Space or M | Mute / unmute |
+| Space or P | Pause / play |
+| M | Mute / unmute |
 | A number, then Enter | Go to that station (in a menu: open that row) |
 | Enter or S | Station list |
 | W | WiFi |
@@ -143,7 +167,8 @@ the on-screen keyboard appears when there's something to type.
 | Trackball up / down | Volume up / down; move the highlight in a menu |
 | Press the trackball | Station list; open the highlighted row; Enter in a text field |
 | Hold the trackball | Menu; back one level (the T-Deck's Esc) |
-| Space or M | Mute / unmute |
+| Space or P | Pause / play |
+| M | Mute / unmute |
 | A number, then Enter | Go to that station (in a menu: open that row) |
 | S / W | Station list / WiFi |
 | Backspace | Delete a character; back one level in a menu |
@@ -154,7 +179,13 @@ Passwords are shown with the **Show** button next to the field.
 
 - **WiFi won't connect**: make sure the network is 2.4 GHz and shows up in the scan. The
   message says why: *Wrong password?*, *Network not found*, or *old security (WEP/WPA)*: the
-  radio only joins secured networks that use WPA2 or newer.
+  radio only joins secured networks that use WPA2 or newer. The *(reason N)* at the end is
+  ESP-IDF's code for it; include it when you report a problem.
+- **T-Deck touch**: the touch panel answers at one of two addresses depending on how it
+  powered up; the radio looks for both. If taps still do nothing, please report it with the
+  serial log (it says *Touch panel at 0x5D* or *0x14*, or *Touch panel not found*).
+- **Bluetooth device won't pair**: put it in pairing mode again, and if it was paired with
+  the radio before, forget it on both sides first. Keyboards type the code shown, then Enter.
 - **WiFi connects but no stations load** (cafe, hotel): the network wants you to sign in
   first. Use **Menu** → **4 Sign in to this network**. *Nothing to fill in or press here*: the
   page needs JavaScript; sign in on a phone and use its hotspot.
@@ -180,7 +211,7 @@ Passwords are shown with the **Show** button next to the field.
   and the test and CI setup.
 - **[Radio Browser](https://www.radio-browser.info/)**: the free, community-run station
   directory. Please consider supporting it.
-- **[Espressif](https://github.com/espressif)**: ESP-IDF, esp_hosted and esp_wifi_remote,
+- **[Espressif](https://github.com/espressif)**: ESP-IDF (with NimBLE), esp_hosted and esp_wifi_remote,
   the `m5stack_tab5` board support package (which tells the Tab5's screens apart),
   `esp_bsp_generic` (the T-Deck's display), esp_lvgl_port, esp-dsp and esp_codec_dev
   (Apache-2.0).

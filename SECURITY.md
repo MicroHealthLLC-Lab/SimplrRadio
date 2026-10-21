@@ -9,7 +9,15 @@ and how to reproduce it.
 ## What the radio does on the network
 
 - **Station-only WiFi, IPv4.** No access point, no DHCP server, no listening sockets, no
-  servers, no Bluetooth, no mDNS. The radio never accepts a connection.
+  servers, no mDNS. The radio never accepts a connection.
+- **Bluetooth LE, as a central only** (keyboards and remotes, `main/bt_hid.cpp`, NimBLE). Off
+  until the user turns it on. The radio never advertises, offers no GATT services and accepts
+  no incoming connection: it scans only when asked and connects to the device the user picks
+  or has paired. No Classic Bluetooth or Bluedroid. Pairing uses LE Secure Connections (legacy
+  pairing only for keyboards without it; a keyboard types a random 6-digit code shown on the
+  screen). Key reports are untrusted input: the report map and every report are bounded and
+  parsed by host-tested code (`main/hid_report.c`); device names are cleaned to printable
+  ASCII before they are shown.
 - **Outbound connections only:** the Radio Browser directory (HTTPS, certificates verified
   with ESP-IDF's CA bundle), the radio streams it lists (HTTP or HTTPS, audio only), the
   captive-portal probe `http://connectivitycheck.gstatic.com/generate_204` and the sign-in
@@ -29,6 +37,9 @@ and how to reproduce it.
   access point supports it.
 - Sign-in pages are untrusted input: size-bounded, no scripts, cookies in RAM only, wiped when
   the sign-in ends. Nothing typed into a page is saved.
+- **Bluetooth bonding keys** are kept in the same encrypted vault as the WiFi passwords
+  (`main/bt_store.cpp`); NimBLE keeps no copy in flash (`CONFIG_BT_NIMBLE_NVS_PERSIST=n`).
+  Forgetting a device deletes its keys. Pairing codes and typed keys are never logged.
 
 ## Changes since 1.x
 
@@ -57,8 +68,9 @@ run for pull requests from forks; no workflow uses `pull_request_target`
 ## Checks
 
 The Tests workflow audits ESP-IDF and every component against the NVD (reviewed exceptions in
-`.github/audit-baseline.txt`), verifies the linked firmware has no servers, sockets, OTA or
-Bluetooth, scans commits for secrets (gitleaks), and pins every action, image and component.
+`.github/audit-baseline.txt`), verifies the linked firmware has no servers, sockets or OTA, and
+no Classic Bluetooth, Bluetooth advertising, GATT server or NimBLE key store (Bluetooth LE
+central only), scans commits for secrets (gitleaks), and pins every action, image and component.
 MicroHealth's shared security scan (SAST, Trivy, SBOM, ZAP) runs on `main`, `integration` and
 pull requests.
 

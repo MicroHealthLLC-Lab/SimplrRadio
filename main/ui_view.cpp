@@ -165,6 +165,8 @@ void UiView::create(lv_obj_t* scr)
     lv_obj_set_flex_grow(title_label, 1);
 
     volume_label = text_label(bar, ui->text, theme::DIM, "");
+    bt_label = text_label(bar, ui->text, theme::ACCENT, LV_SYMBOL_BLUETOOTH);
+    lv_obj_set_hidden(bt_label, true);
     wifi_label = text_label(bar, ui->text, theme::DIM, LV_SYMBOL_WIFI);
 
     page = plain_obj(screen);
@@ -205,11 +207,12 @@ void UiView::set_back(bool shown)
     set_hidden(back_label, !shown);
 }
 
-void UiView::set_status(bool wifi, int rssi, int volume, bool muted)
+void UiView::set_status(bool wifi, int rssi, int volume, bool muted, bool bluetooth)
 {
     if (!bar) {
         return;
     }
+    set_hidden(bt_label, !bluetooth);
     uint32_t color = !wifi ? theme::DANGER : rssi >= -67 ? theme::TEXT : rssi >= -75 ? theme::WARN : theme::DANGER;
     lv_obj_set_style_text_color(wifi_label, lv_color_hex(color), 0);
     if (muted) {
@@ -587,11 +590,11 @@ bool UiView::keyboard_shown() const
 // ---------------------------------------------------------------------------
 
 static const char* const BUTTON_ICONS[NP_BUTTONS] = {
-    LV_SYMBOL_SETTINGS, LV_SYMBOL_PREV, LV_SYMBOL_VOLUME_MAX, LV_SYMBOL_NEXT,
+    LV_SYMBOL_SETTINGS, LV_SYMBOL_PREV, LV_SYMBOL_PAUSE, LV_SYMBOL_NEXT, LV_SYMBOL_VOLUME_MAX,
     LV_SYMBOL_MINUS, LV_SYMBOL_PLUS, LV_SYMBOL_LIST,
 };
 static const char* const BUTTON_WORDS[NP_BUTTONS] = {
-    "Menu", "", "", "", "", "", "Stations",
+    "Menu", "", "", "", "", "", "", "Stations",
 };
 
 void UiView::create_now_playing()
@@ -651,6 +654,8 @@ void UiView::create_now_playing()
         lv_obj_center(l);
         if (i == NP_MUTE) {
             np_mute_label = l;
+        } else if (i == NP_PAUSE) {
+            np_pause_label = l;
         }
     }
 
@@ -687,6 +692,7 @@ void UiView::update_now_playing(const NowPlaying& s)
     set_text(np_status, s.status.c_str());
     lv_obj_set_style_text_color(np_status, lv_color_hex(s.status_warn ? theme::WARN : theme::DIM), 0);
     set_text(np_mute_label, s.muted ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+    set_text(np_pause_label, s.paused ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
 }
 
 void UiView::spectrum_timer_cb(lv_timer_t* t)

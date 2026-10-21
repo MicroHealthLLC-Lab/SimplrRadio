@@ -10,6 +10,13 @@ CONFIG_SPIRAM_SPEED_80M=y
 # Internal RAM is scarce on the S3: keep 32 KB of it for DMA and WiFi
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
 
+# --- Bluetooth --------------------------------------------------------------------------
+# NimBLE with the ESP32-S3's own Bluetooth LE controller (shared settings in sdkconfig.defaults)
+CONFIG_BT_CONTROLLER_ENABLED=y
+# The controller's code runs from flash, not internal RAM: that RAM stays for WiFi, TLS and the
+# stream (a keyboard's keys need no IRAM speed)
+CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
+
 # --- Display: ST7789 320x240 on SPI (esp_bsp_generic), GT911 touch on I2C ----------------
 # The system I2C bus (touch panel, keyboard)
 CONFIG_BSP_I2C_NUM=1

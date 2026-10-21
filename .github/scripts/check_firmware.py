@@ -15,10 +15,11 @@ Adapted from SimplrSSH's check_firmware.py.
       No private keys or API keys in the images (nothing secret is ever compiled in).
 
   check_firmware.py surface <nm-output> <sdkconfig>
-      The linked firmware has no listening sockets, servers, OTA of the radio, Bluetooth,
-      mDNS or access point, and does have TLS certificate-bundle verification, station mode
-      and the WiFi driver kept from storing passwords; the generated sdkconfig keeps the
-      attack surface closed (AI_RULES.md, Scope and security).
+      The linked firmware has no listening sockets, servers, OTA of the radio, mDNS, access
+      point, Classic Bluetooth / Bluedroid, Bluetooth advertising or GATT server (Bluetooth LE
+      is a central only: keyboards and remotes), and does have TLS certificate-bundle
+      verification, station mode and the WiFi driver kept from storing passwords; the
+      generated sdkconfig keeps the attack surface closed (AI_RULES.md, Scope and security).
 
 Each prints GitHub annotations for problems and exits 1 if there are any.
 """
@@ -30,8 +31,10 @@ import sys
 
 # Static internal RAM ceiling per board. Used when this was set (2026-10-20): Tab5 115,080 bytes
 # of the ESP32-P4's 563 KB DIRAM (LVGL, esp_hosted, WiFi/LWIP, mbedTLS, the MP3 decoder); T-Deck
-# 134,575 bytes of the ESP32-S3's (the WiFi driver itself runs there). The headroom absorbs
-# toolchain noise; raise it only deliberately, with the reason.
+# 134,575 bytes of the ESP32-S3's (the WiFi driver itself runs there). With Bluetooth LE
+# (NimBLE): Tab5 121,362, T-Deck 143,599 (its controller's code runs from flash,
+# CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY, or it would be 156,711). The headroom absorbs toolchain
+# noise; raise it only deliberately, with the reason.
 BUDGETS = {"tab5": 140 * 1024, "tdeck": 145 * 1024}
 
 WARNING_RE = re.compile(r"(?:^|/)(main/[^:\s]+):(\d+):\d+: warning: (.*?)(?: \[(-W[^\]]+)\])?$")
@@ -53,7 +56,14 @@ FORBIDDEN_SYMBOLS = [
     (r"lwip_listen|lwip_accept|lwip_bind", "listening socket"),
     (r"httpd_\w+|esp_https_server\w*", "HTTP server"),
     (r"esp_https_ota\w*|esp_ota_begin|esp_ota_write", "OTA update of the radio"),
-    (r"esp_bt_\w+|esp_ble_\w+|ble_hs_\w+|btc_\w+", "Bluetooth"),
+    # Bluetooth LE central only (bt_hid.cpp): no Bluedroid or Classic Bluetooth, nothing that
+    # advertises the radio or serves GATT, no NimBLE copy of the bonding keys in flash
+    (r"btc_\w+|bta_\w+|esp_bluedroid_\w+|esp_bt_gap_\w+|esp_ble_gap_\w+|esp_a2d_\w+|esp_spp_\w+|esp_hidd_\w+",
+     "Bluedroid / Classic Bluetooth"),
+    (r"ble_gap_adv_start|ble_gap_ext_adv_start|ble_gap_adv_set_fields|ble_gap_periodic_adv_start",
+     "Bluetooth advertising"),
+    (r"ble_gatts_add_svcs|ble_gatts_count_cfg|ble_svc_gap_init|ble_svc_gatt_init", "Bluetooth GATT server"),
+    (r"ble_store_config_persist_\w+|ble_store_nvs_\w+", "Bluetooth keys stored by NimBLE in flash"),
     (r"mdns_\w+", "mDNS"),
     (r"dhcps_start|esp_netif_create_default_wifi_ap|esp_wifi_ap_get_sta_list", "WiFi access point"),
     (r"esp_now_\w+", "ESP-NOW"),
@@ -71,11 +81,26 @@ REQUIRED_CONFIG = {
     "CONFIG_ESP_WIFI_SOFTAP_SUPPORT": "n",
     "CONFIG_LWIP_DHCPS": "n",
     "CONFIG_LWIP_IPV6": "n",
-    "CONFIG_BT_ENABLED": "n",
     "CONFIG_ESP_WIFI_NVS_ENABLED": "n",
     "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE": "y",
     "CONFIG_ESP_TLS_INSECURE": "n",
     "CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY": "n",
+}
+# With Bluetooth: NimBLE, central / observer only, no GATT server, Secure Connections, keys in
+# the radio's vault rather than NimBLE's own flash store
+REQUIRED_CONFIG_BT = {
+    "CONFIG_BT_NIMBLE_ENABLED": "y",
+    "CONFIG_BT_BLUEDROID_ENABLED": "n",
+    "CONFIG_BT_CLASSIC_ENABLED": "n",
+    "CONFIG_BT_NIMBLE_ROLE_PERIPHERAL": "n",
+    "CONFIG_BT_NIMBLE_ROLE_BROADCASTER": "n",
+    "CONFIG_BT_NIMBLE_GATT_SERVER": "n",
+    "CONFIG_BT_NIMBLE_NVS_PERSIST": "n",
+    "CONFIG_BT_NIMBLE_SECURITY_ENABLE": "y",
+    "CONFIG_BT_NIMBLE_SM_SC": "y",
+    "CONFIG_BT_NIMBLE_MESH": "n",
+    "CONFIG_BT_NIMBLE_BLUFI_ENABLE": "n",
+    "CONFIG_BT_NIMBLE_MAX_CONNECTIONS": "1",
 }
 # The Tab5's WiFi runs on its ESP32-C6 through esp_hosted / esp_wifi_remote, whose options
 # matter too (the T-Deck's ESP32-S3 has WiFi built in)
@@ -118,6 +143,8 @@ def read_sdkconfig(path):
 
 def sdkconfig_problems(values):
     required = dict(REQUIRED_CONFIG)
+    if values.get("CONFIG_BT_ENABLED", "n") == "y":
+        required.update(REQUIRED_CONFIG_BT)
     if values.get("CONFIG_IDF_TARGET") == '"esp32p4"':
         required.update(REQUIRED_CONFIG_P4)
     return [f"{option}={values.get(option, 'n')} (must be {wanted})"
@@ -219,8 +246,8 @@ def cmd_surface(args):
     problems = surface_problems(symbols, read_sdkconfig(args[1]))
     for p in problems:
         error(p)
-    summary("## Network surface\n\n" + ("No problems: station-only WiFi, no listening sockets, servers, OTA "
-                                       "or Bluetooth; TLS verification linked." if not problems else
+    summary("## Network surface\n\n" + ("No problems: station-only WiFi, no listening sockets, servers or "
+                                       "OTA, Bluetooth LE central only; TLS verification linked." if not problems else
                                        "\n".join(f"- {p}" for p in problems)))
     return 1 if problems else 0
 

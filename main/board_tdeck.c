@@ -4,11 +4,11 @@
 // (github.com/MicroHealthLLC/SimplrSSH, MIT).
 //   Power   : GPIO 10 powers the peripherals (display, keyboard, touch, amplifier, SD, LoRa)
 //   Display : 2.8" ST7789 320x240 on SPI (esp_bsp_generic, set up from sdkconfig.defaults.tdeck)
-//   Touch   : GT911 on the system I2C bus (SDA 18, SCL 8), an LVGL pointer
+//   Touch   : GT911 on the system I2C bus (SDA 18, SCL 8) at 0x5D or 0x14, a polled LVGL pointer
 //   Input   : the ESP32-C3 keyboard and the trackball (tdeck_keyboard.c)
 //   Audio   : MAX98357A I2S amplifier and speaker (BCK 7, WS 5, DOUT 6): no codec, so volume
 //             and mute are applied to the samples, and the one speaker gets left + right
-//   WiFi    : the ESP32-S3's own
+//   WiFi    : the ESP32-S3's own; Bluetooth LE too (NimBLE with the built-in controller)
 
 #include <string.h>
 
@@ -87,15 +87,49 @@ const char *board_wifi_firmware(void)
     return NULL;
 }
 
+esp_err_t board_bt_prepare(void)
+{
+    return ESP_OK;   // The Bluetooth controller is built into the ESP32-S3 (nimble_port_init)
+}
+
+void board_bt_release(void)
+{
+}
+
 // -- Display and touch ----------------------------------------------------
+// The GT911 picks its I2C address from the level of its INT line when its supply comes up:
+// 0x5D (low) or 0x14 (high). The T-Deck doesn't wire the GT911's reset, so the address can't be
+// forced and either may answer: both are tried, for a while, as the controller boots after the
+// peripheral power. It is polled by LVGL (no INT): esp_lvgl_port reads a touch panel with an
+// INT line only on that line's edges, and the T-Deck's GT911 doesn't signal every report or the
+// release that way, so a press could stay down and taps never became clicks.
+#define TOUCH_TRIES     10
+#define TOUCH_RETRY_MS  100
+
 static esp_err_t touch_new(esp_lcd_touch_handle_t *touch)
 {
     ESP_RETURN_ON_ERROR(bsp_i2c_init(), TAG, "I2C init failed");
+    i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
+    uint8_t addr = 0;
+    for (int i = 0; i < TOUCH_TRIES && !addr; i++) {
+        if (i2c_master_probe(bus, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, 20) == ESP_OK) {
+            addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS;
+        } else if (i2c_master_probe(bus, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, 20) == ESP_OK) {
+            addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(TOUCH_RETRY_MS));
+        }
+    }
+    if (!addr) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    ESP_LOGI(TAG, "Touch panel at 0x%02X", addr);
+
     const esp_lcd_touch_config_t tp_cfg = {
         .x_max = BSP_LCD_V_RES,
         .y_max = BSP_LCD_H_RES,
         .rst_gpio_num = GPIO_NUM_NC,
-        .int_gpio_num = PIN_TOUCH_INT,
+        .int_gpio_num = GPIO_NUM_NC,   // Polled (see above): PIN_TOUCH_INT is left alone
         .flags = {
             .swap_xy = 1,
             .mirror_x = 1,
@@ -103,10 +137,15 @@ static esp_err_t touch_new(esp_lcd_touch_handle_t *touch)
         },
     };
     esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+    io_cfg.dev_addr = addr;
     io_cfg.scl_speed_hz = TOUCH_I2C_HZ;
     esp_lcd_panel_io_handle_t io = NULL;
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(bsp_i2c_get_handle(), &io_cfg, &io), TAG, "Touch I/O failed");
-    return esp_lcd_touch_new_i2c_gt911(io, &tp_cfg, touch);
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io), TAG, "Touch I/O failed");
+    esp_err_t err = esp_lcd_touch_new_i2c_gt911(io, &tp_cfg, touch);
+    if (err != ESP_OK) {
+        esp_lcd_panel_io_del(io);
+    }
+    return err;
 }
 
 lv_display_t *board_display_start(void)

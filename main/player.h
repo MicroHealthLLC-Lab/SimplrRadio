@@ -23,6 +23,7 @@ typedef enum {
     PLAYER_CONNECTING,    // Stream opening / buffering
     PLAYER_PLAYING,       // Audio is coming out
     PLAYER_UNAVAILABLE,   // The station refused the stream (e.g. HTTP 403, geo-blocked)
+    PLAYER_PAUSED,        // The user paused: nothing streams until Play or a station is picked
 } player_status_t;
 
 esp_err_t player_init(void);            // Audio, spectrum, saved volume
@@ -34,10 +35,13 @@ int player_count(void);
 int player_index(void);                 // -1 without stations
 const radio_station_t *player_station(int index);   // NULL if out of range
 
-void player_select(int index);          // Tune (debounced)
+void player_select(int index);          // Tune (debounced); ends a pause
 void player_step(int delta);            // Next (+1) / previous (-1), wrapping
 void player_stop(void);                 // Stop the stream (WiFi down)
-void player_resume(void);               // Tune the current station again (WiFi back)
+void player_resume(void);               // Tune the current station again (WiFi back), unless paused
+void player_pause(void);                // The user stops the radio: stream closed, stays stopped
+void player_play(void);                 // Ends a pause: the current station again
+bool player_paused(void);
 void player_tick(void);                 // Commits a pending tune, watches the stream
 
 player_status_t player_status(void);

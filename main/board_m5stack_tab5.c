@@ -10,7 +10,8 @@
 //   Keyboard: optional Tab5 Keyboard (tab5_keyboard.c)
 //   Audio   : ES8388 codec (BSP), biquad EQ, speaker muted while headphones are plugged in
 //   Power   : two PI4IOE5V6408 IO expanders: speaker amp, side-port 5 V, ESP32-C6 power, charger
-//   WiFi    : the ESP32-C6 co-processor over SDIO (esp_hosted + esp_wifi_remote)
+//   WiFi    : the ESP32-C6 co-processor over SDIO (esp_hosted + esp_wifi_remote); Bluetooth LE
+//             through it too (esp_hosted HCI, NimBLE on the P4)
 
 #include <stdio.h>
 #include <string.h>
@@ -28,6 +29,7 @@
 #include "dsps_biquad_gen.h"
 
 #include "esp_hosted.h"
+#include "esp_hosted_bt_host_stack.h"
 
 #include "audio.h"
 #include "board.h"
@@ -170,6 +172,28 @@ esp_err_t board_wifi_prepare(void)
 const char *board_wifi_firmware(void)
 {
     return s_c6_version[0] ? s_c6_version : "unknown";
+}
+
+// Bluetooth LE through the C6 as well: esp_hosted carries HCI over the same SDIO link, NimBLE
+// runs here. The C6's firmware must have its Bluetooth controller (setup() waits up to 5 s).
+esp_err_t board_bt_prepare(void)
+{
+    esp_err_t err = board_wifi_prepare();
+    if (err != ESP_OK) {
+        return err;
+    }
+    esp_hosted_bt_host_stack_cfg_t cfg = ESP_HOSTED_BT_HOST_STACK_CONFIG_DEFAULT();
+    err = esp_hosted_bt_host_stack_setup(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "C6 Bluetooth controller not available: %s", esp_err_to_name(err));
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    return ESP_OK;
+}
+
+void board_bt_release(void)
+{
+    esp_hosted_bt_host_stack_teardown();
 }
 
 // -- Keyboard -------------------------------------------------------------

@@ -27,6 +27,13 @@ esp_err_t board_wifi_prepare(void);
 // The WiFi co-processor's firmware version for the About page, NULL when there is none
 const char *board_wifi_firmware(void);
 
+// Bluetooth (bt_hid.cpp), before NimBLE starts (worker task, blocking). Tab5: links NimBLE to
+// the ESP32-C6's Bluetooth controller over esp_hosted (after board_wifi_prepare()); fails when
+// the C6's firmware has no Bluetooth. T-Deck: nothing, the controller is in the ESP32-S3.
+// board_bt_release() after NimBLE stopped.
+esp_err_t board_bt_prepare(void);
+void board_bt_release(void);
+
 // Display, touch (an LVGL pointer input) and backlight; LVGL is running when it returns.
 // All LVGL calls from other tasks must hold the display lock (lvgl_port_lock).
 lv_display_t *board_display_start(void);

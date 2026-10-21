@@ -23,6 +23,14 @@
 #define KEY_DELETE     0x109   // Delete at the cursor
 #define KEY_GO_HOME    0x10A   // Back to Now Playing from anywhere (Tab5: Ctrl+Del)
 
+// Media keys (a Bluetooth keyboard's or remote's): act on the player from any screen
+#define KEY_PLAY_PAUSE 0x110
+#define KEY_NEXT_TRACK 0x111
+#define KEY_PREV_TRACK 0x112
+#define KEY_VOL_UP     0x113
+#define KEY_VOL_DOWN   0x114
+#define KEY_MUTE       0x115
+
 static inline int key_is_char(uint32_t key)
 {
     return key >= 0x20 && key < 0x7F;

@@ -42,6 +42,9 @@ namespace wifi
     esp_err_t start(progress_cb_t progress);
     bool started();
     void on_link(link_cb_t cb);
+    // WiFi stays awake (no modem sleep) for streaming, except while Bluetooth runs: ESP-IDF's
+    // WiFi / Bluetooth coexistence needs modem sleep (bt_hid.cpp turns it on and off)
+    void set_power_save(bool on);
 
     esp_err_t scan(std::vector<Network>& out);   // De-duplicated by SSID, strongest first
 
