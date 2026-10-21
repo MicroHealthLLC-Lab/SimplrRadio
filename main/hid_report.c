@@ -5,7 +5,6 @@
 // main item. Only Input main items move the field offsets.
 
 #include "hid_report.h"
-#include <string.h>
 
 #define MAX_IDS      16     // Report IDs counted in one map
 #define STACK_DEPTH  4      // Push / Pop levels
@@ -78,7 +77,7 @@ static void add_field(hid_map_t *map, const globals_t *g, const locals_t *l, uin
         return;   // Constant padding, a size the radio doesn't decode, or a page it doesn't use
     }
     hid_field_t *f = &map->fields[map->count++];
-    memset(f, 0, sizeof(*f));
+    *f = (hid_field_t){0};
     f->report_id = g->report_id;
     f->usage_page = page;
     f->bit_offset = (uint16_t)offset;
@@ -98,7 +97,7 @@ static void add_field(hid_map_t *map, const globals_t *g, const locals_t *l, uin
 
 bool hid_parse_map(const uint8_t *desc, size_t len, hid_map_t *map)
 {
-    memset(map, 0, sizeof(*map));
+    *map = (hid_map_t){0};
     if (!desc || len == 0 || len > HID_MAX_MAP_BYTES) {
         return false;
     }
@@ -140,7 +139,7 @@ bool hid_parse_map(const uint8_t *desc, size_t len, hid_map_t *map)
                 add_field(map, &g, &l, *off, v);
                 *off += bits;
             }
-            memset(&l, 0, sizeof(l));   // Every main item ends the local items
+            l = (locals_t){0};   // Every main item ends the local items
         } else if (type == 1) {   // Global
             switch (tag) {
                 case 0: g.usage_page = (uint16_t)v; break;
@@ -244,7 +243,7 @@ static void add_consumer(hid_input_t *out, uint32_t usage)
 
 void hid_decode(const hid_map_t *map, uint8_t report_id, const uint8_t *data, size_t len, hid_input_t *out)
 {
-    memset(out, 0, sizeof(*out));
+    *out = (hid_input_t){0};
     if (!data) {
         return;
     }
@@ -303,7 +302,7 @@ void hid_decode(const hid_map_t *map, uint8_t report_id, const uint8_t *data, si
 
 void hid_decode_boot_keyboard(const uint8_t *data, size_t len, hid_input_t *out)
 {
-    memset(out, 0, sizeof(*out));
+    *out = (hid_input_t){0};
     if (!data || len < 3) {
         return;
     }

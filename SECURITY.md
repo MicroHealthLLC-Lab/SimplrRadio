@@ -87,3 +87,15 @@ firmware update). The other 38 were checked by hand; the same rules and Opengrep
 | `memcpy` of the SSID and password into the WiFi config | Clamped to the config's fields as well as checked against 32 / 63 characters before |
 | `memset` (can be optimized away when clearing secrets) on spectrum, key map and EQ filter state | None held a secret; replaced by a struct assignment and loops, or dropped (statics start at zero). Secrets are cleared with `mbedtls_platform_zeroize` |
 | 21 more: `memcpy` between buffers of the same fixed size or with the bound checked on the line before, `strlen` on strings the firmware NUL-terminates | Not applicable: suppressed inline with the full rule id and the bound |
+
+### SAST review (2026-10-21)
+
+The scan of the Bluetooth LE code reported 16 Opengrep findings. None could overflow or leak; the
+code was changed so the patterns are gone, and the same rules and Opengrep now report 0:
+
+| Finding | Outcome |
+|---|---|
+| `memcpy` of 6-byte Bluetooth addresses (`bt_hid.cpp`, 6 findings) | Every source and destination is `uint8_t[6]`. Now one helper that takes both as array references, so the compiler checks the sizes |
+| `memcpy` of bonding keys into and out of the vault record (`bt_hid.cpp`, 4 findings) | The record's length was checked before reading. Now built with `std::string::append` and read with `std::string::copy`, which check the bounds |
+| `memcpy` of an advertised device name (`bt_hid.cpp`) | Clamped to the buffer the line before. Now a `std::string` of at most 31 bytes |
+| `memset` on the HID report map, fields, local items and decoded input (`hid_report.c`, 5 findings) | None held a secret, and each is read right after, so it can't be optimized away. Replaced by struct assignments |
