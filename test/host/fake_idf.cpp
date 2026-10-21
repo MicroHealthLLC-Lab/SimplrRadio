@@ -9,6 +9,7 @@
 #include "nvs_flash.h"
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <random>
@@ -493,4 +494,18 @@ esp_err_t nvs_entry_info(nvs_iterator_t it, nvs_entry_info_t* info)
 void nvs_release_iterator(nvs_iterator_t it)
 {
     delete it;
+}
+
+// The music library's big arrays (PSRAM on the radio, music_player.cpp): the host's heap
+namespace music
+{
+    void* big_alloc(size_t bytes)
+    {
+        return malloc(bytes ? bytes : 1);
+    }
+
+    void big_free(void* p)
+    {
+        free(p);
+    }
 }

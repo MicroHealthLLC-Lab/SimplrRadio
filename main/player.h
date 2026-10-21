@@ -3,6 +3,9 @@
 // Player: the station list, tuning (debounced, so paging through stations doesn't start and
 // stop a stream for each one), stream health (a station that drops is retried, then skipped),
 // volume and mute (saved to flash a moment after the last change, not on every step).
+// Its source is the radio or music from the SD card (music_player.h): while music plays, next /
+// previous, pause / play and the status are the music player's, a lost WiFi link doesn't stop
+// it, and picking a station hands the output back to the radio.
 // Called from the app task; player_tick() must run outside the display lock (stopping a
 // stream waits for its tasks).
 
@@ -35,7 +38,7 @@ int player_count(void);
 int player_index(void);                 // -1 without stations
 const radio_station_t *player_station(int index);   // NULL if out of range
 
-void player_select(int index);          // Tune (debounced); ends a pause
+void player_select(int index);          // Tune (debounced); ends a pause and any music
 void player_step(int delta);            // Next (+1) / previous (-1), wrapping
 void player_stop(void);                 // Stop the stream (WiFi down)
 void player_resume(void);               // Tune the current station again (WiFi back), unless paused
@@ -43,6 +46,12 @@ void player_pause(void);                // The user stops the radio: stream clos
 void player_play(void);                 // Ends a pause: the current station again
 bool player_paused(void);
 void player_tick(void);                 // Commits a pending tune, watches the stream
+
+// Music takes the audio output (music_player.cpp): the stream stops, the station stays chosen
+void player_release(void);
+// At boot, when music played last: a station list that arrives doesn't start the radio until
+// player_set_hold(false) (then it does, unless music started meanwhile)
+void player_set_hold(bool hold);
 
 player_status_t player_status(void);
 void player_title(char *buf, size_t len);   // Current song (ICY), "" if none

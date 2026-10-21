@@ -33,9 +33,11 @@ import sys
 # of the ESP32-P4's 563 KB DIRAM (LVGL, esp_hosted, WiFi/LWIP, mbedTLS, the MP3 decoder); T-Deck
 # 134,575 bytes of the ESP32-S3's (the WiFi driver itself runs there). With Bluetooth LE
 # (NimBLE): Tab5 121,362, T-Deck 143,599 (its controller's code runs from flash,
-# CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY, or it would be 156,711). The headroom absorbs toolchain
-# noise; raise it only deliberately, with the reason.
-BUDGETS = {"tab5": 140 * 1024, "tdeck": 145 * 1024}
+# CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY, or it would be 156,711). With the music player (2026-10-21:
+# esp_audio_codec keeps 3.5 KB of decoder code in IRAM, FATFS / SD drivers the rest): Tab5
+# 122,056, T-Deck 147,779, so the T-Deck's ceiling went from 145 to 150 KB. The headroom absorbs
+# toolchain noise; raise it only deliberately, with the reason.
+BUDGETS = {"tab5": 140 * 1024, "tdeck": 150 * 1024}
 
 WARNING_RE = re.compile(r"(?:^|/)(main/[^:\s]+):(\d+):\d+: warning: (.*?)(?: \[(-W[^\]]+)\])?$")
 

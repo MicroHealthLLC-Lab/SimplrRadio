@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 extern "C" void ble_store_config_init(void);
 
@@ -125,6 +126,12 @@ static void message(const std::string& text)
     changed();
 }
 
+// BLE addresses are 6 bytes everywhere; the array references make the compiler check both sizes
+static void copy_addr(uint8_t (&dst)[6], const uint8_t (&src)[6])
+{
+    std::copy(std::begin(src), std::end(src), std::begin(dst));
+}
+
 static std::string shown_name(const std::string& name)
 {
     return name.empty() ? std::string("the device") : name;
@@ -164,12 +171,13 @@ static void persist(const ble_addr_t& addr)
         bt_store::remove_keys(addr.type, addr.val);
         return;
     }
-    std::string record(3 + 2 * SEC_SIZE, '\0');
-    record[0] = (char)BOND_VERSION;
-    record[1] = (char)SEC_SIZE;
-    record[2] = (char)((has_ours ? 1 : 0) | (has_theirs ? 2 : 0));
-    memcpy(&record[3], &ours, SEC_SIZE);
-    memcpy(&record[3 + SEC_SIZE], &theirs, SEC_SIZE);
+    std::string record;
+    record.reserve(3 + 2 * SEC_SIZE);
+    record += (char)BOND_VERSION;
+    record += (char)SEC_SIZE;
+    record += (char)((has_ours ? 1 : 0) | (has_theirs ? 2 : 0));
+    record.append(reinterpret_cast<const char*>(&ours), SEC_SIZE);
+    record.append(reinterpret_cast<const char*>(&theirs), SEC_SIZE);
     if (bt_store::put_keys(addr.type, addr.val, record) != ESP_OK) {
         ESP_LOGW(TAG, "Bond not saved (vault unavailable)");
     }
@@ -211,11 +219,11 @@ static void load_bonds()
             (uint8_t)record[1] == SEC_SIZE) {
             union ble_store_value value;
             if (record[2] & 1) {
-                memcpy(&value.sec, &record[3], SEC_SIZE);
+                record.copy(reinterpret_cast<char*>(&value.sec), SEC_SIZE, 3);
                 ble_store_config_write(BLE_STORE_OBJ_TYPE_OUR_SEC, &value);
             }
             if (record[2] & 2) {
-                memcpy(&value.sec, &record[3 + SEC_SIZE], SEC_SIZE);
+                record.copy(reinterpret_cast<char*>(&value.sec), SEC_SIZE, 3 + SEC_SIZE);
                 ble_store_config_write(BLE_STORE_OBJ_TYPE_PEER_SEC, &value);
             }
             mbedtls_platform_zeroize(&value, sizeof(value));
@@ -287,7 +295,7 @@ static void background_connect()
     uint8_t n = 0;
     for (const auto& d : devices) {
         list[n].type = d.addr_type;
-        memcpy(list[n].val, d.addr, 6);
+        copy_addr(list[n].val, d.addr);
         n++;
     }
     struct ble_gap_conn_params p = conn_params(true);
@@ -359,7 +367,7 @@ static void setup_done()
     if (s_user_pairing) {
         bt_store::Device d;
         d.addr_type = desc.peer_id_addr.type;
-        memcpy(d.addr, desc.peer_id_addr.val, 6);
+        copy_addr(d.addr, desc.peer_id_addr.val);
         d.name = name;
         bt_store::remember(d);
         message("Paired with " + shown_name(name) + ". Its keys now work the radio.");
@@ -653,11 +661,9 @@ static void on_advertisement(const struct ble_gap_disc_desc& d)
     }
     char name[bt_store::MAX_NAME + 1] = "";
     if (fields.name && fields.name_len) {
-        char raw[32];
-        size_t n = std::min((size_t)fields.name_len, sizeof(raw) - 1);
-        memcpy(raw, fields.name, n);
-        raw[n] = '\0';
-        text_to_ascii(name, sizeof(name), raw);
+        // At most 31 bytes (an advertisement carries fewer); the screen keeps MAX_NAME
+        std::string raw(reinterpret_cast<const char*>(fields.name), std::min((size_t)fields.name_len, (size_t)31));
+        text_to_ascii(name, sizeof(name), raw.c_str());
     }
     BtLock lock;
     for (auto& s : s_seen) {
@@ -673,7 +679,7 @@ static void on_advertisement(const struct ble_gap_disc_desc& d)
     if (s_seen.size() < MAX_SEEN) {
         Seen s;
         s.found.addr_type = d.addr.type;
-        memcpy(s.found.addr, d.addr.val, 6);
+        copy_addr(s.found.addr, d.addr.val);
         s.found.name = name;
         s.found.rssi = d.rssi;
         s.hid = hid;
@@ -685,7 +691,7 @@ static void start_pair_connect()
 {
     ble_addr_t addr;
     addr.type = s_pairing.addr_type;
-    memcpy(addr.val, s_pairing.addr, 6);
+    copy_addr(addr.val, s_pairing.addr);
     struct ble_gap_conn_params p = conn_params(false);
     s_user_pairing = true;
     if (ble_gap_connect(s_own_addr_type, &addr, PAIR_CONNECT_MS, &p, gap_event, NULL) != 0) {
@@ -1079,7 +1085,7 @@ esp_err_t bt_hid::pair(const Found& device)
         return ESP_ERR_INVALID_STATE;
     }
     s_pairing.addr_type = device.addr_type;
-    memcpy(s_pairing.addr, device.addr, 6);
+    copy_addr(s_pairing.addr, device.addr);
     s_pairing.name = device.name;
     {
         BtLock lock;
@@ -1105,7 +1111,7 @@ void bt_hid::forget(const bt_store::Device& device)
     if (s_started) {
         ble_addr_t addr;
         addr.type = device.addr_type;
-        memcpy(addr.val, device.addr, 6);
+        copy_addr(addr.val, device.addr);
         struct ble_gap_conn_desc desc;
         if (s_conn != BLE_HS_CONN_HANDLE_NONE && ble_gap_conn_find(s_conn, &desc) == 0 &&
             ble_addr_cmp(&desc.peer_id_addr, &addr) == 0) {

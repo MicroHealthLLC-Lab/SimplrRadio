@@ -109,17 +109,22 @@ Merge workflow updates once a release has finished.
 main/app.cpp            boot, screens, input; worker task for blocking jobs
 main/ui_view.cpp        LVGL: title bar, pages, prompts + on-screen keyboard, Now Playing, spectrum
 main/ui_page.cpp        page / row model
-main/player.c           stations, debounced tuning, stream health, volume / mute
+main/player.c           stations, debounced tuning, stream health, volume / mute; music's controls
 main/stream.c           HTTP(S) stream + ICY metadata into a ring buffer
 main/mp3_decoder.c      libhelix MP3 decode to the codec and the spectrum
+main/music_player.cpp   music: SD card library, index files, play queue, playback
+main/music_decoder.c    music file decode (esp_audio_codec) to the codec and the spectrum
+main/music_library.cpp  library model: groups, search, queue, index files, music settings
+main/media_tags.c       audio formats, tags, lengths, names from the path, genres
+main/music_online.c     missing genres from MusicBrainz
 main/spectrum.c         512-point FFT (esp-dsp), 32 log-spaced bands
 main/radio_browser.c    station directory (HTTPS, mirrors)
 main/wifi_mgr.cpp       WiFi (Tab5: via the ESP32-C6), saved networks, auto-connect
 main/portal*.cpp        captive-portal sign-in pages
 main/secret_vault.cpp   AES-256-GCM WiFi passwords
 main/settings*.cpp      settings partition, radio settings
-main/board_m5stack_tab5.c     Tab5: BSP display/touch (all panels), ES8388, EQ, headphone jack, C6 link
-main/board_tdeck.c            T-Deck: BSP ST7789 display, GT911 touch, I2S speaker
+main/board_m5stack_tab5.c     Tab5: BSP display/touch (all panels), ES8388, EQ, headphone jack, C6 link, SD card
+main/board_tdeck.c            T-Deck: BSP ST7789 display, GT911 touch, I2S speaker, SD card
 main/tab5_keyboard.c, tab5_keymap.c     Tab5 Keyboard
 main/tdeck_keyboard.c, tdeck_keymap.c   T-Deck keyboard and trackball
 ```

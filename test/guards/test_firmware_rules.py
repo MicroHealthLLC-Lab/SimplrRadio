@@ -95,7 +95,7 @@ class Settings(unittest.TestCase):
         for code in SRC.values():
             used |= set(re.findall(r'settings_nvs::open\(\s*"(\w+)"', code))
             used |= set(re.findall(r'static const char\s*\*\s*(?:NS|NS_\w+)\s*=\s*"(\w+)"', code))
-        self.assertEqual(used, {"radio", "wifi", "vault", "vault_dev", "bt"})
+        self.assertEqual(used, {"radio", "wifi", "vault", "vault_dev", "bt", "music"})
         rules = repo.read("AI_RULES.md")
         for ns in used:
             with self.subTest(namespace=ns):
@@ -110,7 +110,8 @@ class Settings(unittest.TestCase):
 
 class Tasks(unittest.TestCase):
     # AI_RULES.md, Memory and tasks
-    STACKS = {"worker": 12288, "stream": "TASK_STACK", "mp3dec": "TASK_STACK", "hp_detect": 3072}
+    STACKS = {"worker": 12288, "stream": "TASK_STACK", "mp3dec": "TASK_STACK", "filedec": "TASK_STACK",
+              "hp_detect": 3072}
 
     def test_task_stacks_match_budget(self):
         found = {}
@@ -120,6 +121,7 @@ class Tasks(unittest.TestCase):
         self.assertEqual(found, self.STACKS, "a new or resized task needs AI_RULES.md updated")
         self.assertIn("#define TASK_STACK      (16 * 1024)", repo.read("main", "stream.c"))
         self.assertIn("#define TASK_STACK      (16 * 1024)", repo.read("main", "mp3_decoder.c"))
+        self.assertIn("#define TASK_STACK      (16 * 1024)", repo.read("main", "music_decoder.c"))
 
     def test_no_busy_wait(self):
         self.assertEqual(grep(r"while\s*\(\s*(1|true)\s*\)\s*;"), [])
@@ -152,6 +154,36 @@ class Bounds(unittest.TestCase):
         self.assertIn(f"HID report map {map_bytes} bytes", bounds)
         sdk = repo.read("sdkconfig.defaults")
         self.assertIn(f"CONFIG_BT_NIMBLE_MAX_BONDS={devices}", sdk)
+
+    def test_music_bounds(self):
+        rules = re.sub(r"\s+", " ", repo.read("AI_RULES.md"))
+        bounds = re.search(r"Bound every collection \(([^)]*)\)", rules).group(1)
+        lib = SRC["main/music_library.hpp"]
+        tags = repo.read("main", "media_tags.h")
+        tracks = int(re.search(r"MAX_TRACKS = (\d+);", lib).group(1))
+        path = int(re.search(r"PATH_LEN = (\d+);", lib).group(1))
+        depth = int(re.search(r"MAX_FOLDER_DEPTH = (\d+);", lib).group(1))
+        favorites = int(re.search(r"MAX_FAVORITES = (\d+);", lib).group(1))
+        cache = int(re.search(r"MAX_GENRE_CACHE = (\d+);", lib).group(1))
+        folders = int(re.search(r"MAX_FOLDERS = (\d+);", SRC["main/music_player.h"]).group(1))
+        reply_kb = int(re.search(r"REPLY_MAX\s+\((\d+) \* 1024\)", repo.read("main", "music_online.c")).group(1))
+        text = int(re.search(r"MEDIA_TEXT_MAX\s+(\d+)", tags).group(1))
+        comments_kb = int(re.search(r"MEDIA_COMMENTS_MAX\s+\((\d+) \* 1024\)", tags).group(1))
+        frames_kb = int(re.search(r"OUT_MAX\s+\((\d+) \* 1024\)", repo.read("main", "music_decoder.c")).group(1))
+        for wanted in (f"music library {tracks} songs in PSRAM", f"song paths {path} bytes",
+                       f"music folders {depth} deep and {folders} per listing", f"favorites {favorites}",
+                       f"online genres {cache} artists", f"MusicBrainz reply {reply_kb} KB in PSRAM",
+                       f"tag values {text} bytes", f"comment blocks {comments_kb} KB",
+                       f"decoded music frames {frames_kb} KB in PSRAM"):
+            with self.subTest(bound=wanted):
+                self.assertIn(wanted, bounds)
+        self.assertIn("MALLOC_CAP_SPIRAM", SRC["main/music_player.cpp"])   # big_alloc: the library in PSRAM
+
+    def test_sd_card_never_formatted(self):
+        for board in ("board_m5stack_tab5.c", "board_tdeck.c"):
+            with self.subTest(board=board):
+                self.assertIn(".format_if_mount_failed = false", SRC[f"main/{board}"])
+        self.assertEqual(grep(r"esp_vfs_fat_sdcard_format|f_mkfs"), [])
 
     def test_sign_in_page_bounds(self):
         header = repo.read("main", "portal.hpp")
@@ -287,7 +319,8 @@ class Ui(unittest.TestCase):
         app = SRC["main/app.cpp"]
         for call in ("wifi::connect(", "wifi::scan(", "wifi::auto_connect(", "wifi::start(", "radio_browser_fetch(",
                      "portal::probe(", "portal::fetch(", "bt_hid::start(", "bt_hid::stop(", "bt_hid::scan(",
-                     "bt_hid::pair("):
+                     "bt_hid::pair(", "music::mount(", "music::scan(", "music::load_index(", "music::save_index(",
+                     "music::load_genres(", "music::save_genres(", "music::list_folders(", "music_online_artist("):
             for m in re.finditer(re.escape(call), app):
                 job = app.rfind("run_job(", 0, m.start())
                 with self.subTest(call=call, offset=m.start()):
@@ -296,7 +329,8 @@ class Ui(unittest.TestCase):
 
     def test_player_waits_outside_the_display_lock(self):
         app = SRC["main/app.cpp"]
-        for call in ("player_stop()", "player_resume()", "player_set_stations(", "player_pause()", "player_play()"):
+        for call in ("player_stop()", "player_resume()", "player_set_stations(", "player_pause()", "player_play()",
+                     "music::play("):
             with self.subTest(call=call):
                 for m in re.finditer(re.escape(call), app):
                     before = app[max(0, m.start() - 40):m.start()]
@@ -310,19 +344,25 @@ class Ui(unittest.TestCase):
 
     def test_page_model_is_host_tested(self):
         for name in ("main/ui_page.cpp", "main/ui_page.hpp", "main/text.c", "main/tab5_keymap.c",
-                     "main/tdeck_keymap.c", "main/hid_report.c", "main/hid_keymap.c"):
+                     "main/tdeck_keymap.c", "main/hid_report.c", "main/hid_keymap.c", "main/media_tags.c",
+                     "main/media_tags.h", "main/music_library.cpp"):
             with self.subTest(file=name):
                 self.assertNotRegex(SRC[name], r'#include\s*[<"](lvgl\.h|esp_|freertos/)',
                                     "keep host-tested code free of LVGL / ESP-IDF headers")
         host = repo.read("test", "host", "CMakeLists.txt")
         for name in ("ui_page.cpp", "text.c", "tab5_keymap.c", "tdeck_keymap.c", "portal.cpp", "secret_vault.cpp",
-                     "settings.cpp", "hid_report.c", "hid_keymap.c", "bt_store.cpp"):
+                     "settings.cpp", "hid_report.c", "hid_keymap.c", "bt_store.cpp", "media_tags.c",
+                     "music_library.cpp"):
             self.assertIn(f"${{MAIN_DIR}}/{name}", host)
 
     def test_network_text_cleaned_for_the_screen(self):
         self.assertIn("text_to_ascii(", SRC["main/radio_browser.c"])
         self.assertIn("text_to_ascii(", SRC["main/player.c"])
         self.assertIn("portal::printable(", SRC["main/app.cpp"])
+        # Text from the SD card (tags, file names) and from MusicBrainz
+        self.assertIn("text_to_ascii(", SRC["main/media_tags.c"])
+        self.assertIn("text_to_ascii(", SRC["main/music_online.c"])
+        self.assertIn("printable(t.title)", SRC["main/music_library.cpp"])   # The index file's text
 
     def test_sources_are_ascii(self):
         files = sorted(glob.glob(os.path.join(repo.MAIN, "*.c")) + glob.glob(os.path.join(repo.MAIN, "*.cpp"))

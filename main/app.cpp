@@ -23,6 +23,8 @@
 #include "bt_hid.hpp"
 #include "bt_store.hpp"
 #include "keys.h"
+#include "music_online.h"
+#include "music_player.h"
 #include "player.h"
 #include "portal_client.hpp"
 #include "radio_browser.h"
@@ -37,6 +39,7 @@
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_netif.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -130,6 +133,12 @@ enum class Screen {
     PortalPage,
     PortalField,     // Prompt
     PortalOption,
+    Music,           // Songs on the SD card
+    MusicSongs,      // A list of songs (all, an artist's, an album, a genre, favorites, a search)
+    MusicGroups,     // Artists, albums or genres
+    MusicSearch,     // Prompt
+    MusicSettings,
+    MusicFolder,     // Choosing the music folder
 };
 
 static UiView s_ui;
@@ -177,6 +186,25 @@ static bool s_bt_autostart;             // Turn it on once the radio is up (it w
 static bt_store::Device s_bt_forget;
 static uint32_t s_bt_version = UINT32_MAX;
 
+// Music
+static const int MUSIC_PAGE_ROWS = 40;  // Rows of a long list per page
+static bool s_music_opening;            // The card / the library is being read
+static std::string s_music_problem;     // Why there are no songs ("No SD card found...")
+static int s_music_scanned_shown = -1;  // Songs found, as the "Please wait" screen shows it
+static music::Indexes s_songs;          // The list MusicSongs shows
+static std::string s_songs_title;
+static Screen s_songs_back = Screen::Music;
+static int s_songs_page;
+static music::Groups s_groups;          // The list MusicGroups shows
+static music::Group s_group_kind = music::Group::Artist;
+static int s_groups_page;
+static std::string s_folder = "/";      // The folder browser's folder
+static std::vector<std::string> s_folders;
+static int s_folders_page;
+static int64_t s_lookup_at;             // Next online genre lookup (0 = none due)
+static int s_lookup_pos;                // Where in the library the lookups have got to
+static int s_lookup_dirty;              // Genres found since the index was saved
+
 // Last status shown in the title bar
 static uint32_t s_np_version = UINT32_MAX;
 
@@ -188,6 +216,8 @@ static int64_t now_ms()
 static void defer(std::function<void()> fn);
 static void go(Screen screen);
 static void render();
+static void refresh();
+static void busy(const std::string& text);
 static void load_stations();
 static void after_connect(bool quiet);
 static void scan_networks();
@@ -292,9 +322,19 @@ static void update_status()
                     bt_hid::state() == bt_hid::State::Connected);
 }
 
+static void music_now_playing(NowPlaying& np);
+
 static void refresh_now_playing()
 {
     NowPlaying np;
+    s_ui.set_title(music_active() ? "SimplrRadio - Music" : s_link_up ? "SimplrRadio" : "SimplrRadio - offline");
+    s_ui.set_list_button(music_active() ? "Songs" : "Stations");
+    if (music_active()) {
+        music_now_playing(np);
+        s_ui.update_now_playing(np);
+        update_status();
+        return;
+    }
     int index = player_index();
     const radio_station_t* st = player_station(index);
     if (st) {
@@ -406,6 +446,700 @@ static std::string bt_summary()
     return bt_hid::state() == bt_hid::State::Unavailable ? "not available" : bt_on() ? "on" : "off";
 }
 
+// ---------------------------------------------------------------------------
+// Music (songs on the SD card): the same pages as the radio's menus
+// ---------------------------------------------------------------------------
+
+static std::string plural(int n, const char* one, const char* many)
+{
+    return std::to_string(n) + " " + (n == 1 ? one : many);
+}
+
+static int pages_of(int count)
+{
+    return count <= MUSIC_PAGE_ROWS ? 1 : (count + MUSIC_PAGE_ROWS - 1) / MUSIC_PAGE_ROWS;
+}
+
+// "Previous page" / "Next page" rows and "Page 2 of 5" for long lists
+static void add_pager(ui::Page& p, int page, int count)
+{
+    int pages = pages_of(count);
+    if (pages <= 1) {
+        return;
+    }
+    if (page > 0) {
+        p.rows.push_back(ui::row("p", "Previous page", LV_SYMBOL_UP));
+    }
+    if (page + 1 < pages) {
+        p.rows.push_back(ui::row("n", "Next page", LV_SYMBOL_DOWN, std::to_string(page + 2) + " of " + std::to_string(pages)));
+    }
+}
+
+static std::string page_info(int page, int count)
+{
+    return pages_of(count) > 1 ? "Page " + std::to_string(page + 1) + " of " + std::to_string(pages_of(count)) + "   " : "";
+}
+
+static bool page_key_move(const std::string& key, int& page, int count)
+{
+    if (key == "n" && page + 1 < pages_of(count)) {
+        page++;
+    } else if (key == "p" && page > 0) {
+        page--;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+static const char* repeat_words(music::Repeat r)
+{
+    return r == music::Repeat::Off ? "off" : r == music::Repeat::One ? "this song" : "the list";
+}
+
+static std::string song_detail(const music::Track& t)
+{
+    std::string d = t.artist[0] ? t.artist : "Unknown artist";
+    std::string time = music::duration_text(t.duration_ms);
+    if (!time.empty()) {
+        d += "   " + time;
+    }
+    if (t.flags & music::UNPLAYABLE) {
+        d += "   can't be played";
+    }
+    return d;
+}
+
+static std::string music_summary()
+{
+    if (s_music_opening) {
+        return "reading the SD card...";
+    }
+    if (!music::loaded()) {
+        return s_music_problem.empty() ? "SD card" : "no songs";
+    }
+    return plural(music::library().size(), "song", "songs");
+}
+
+// Opens the song list `songs` (titled `title`; Back returns to `from`); the playing song is
+// highlighted when it is on the list
+static void show_songs(const std::string& title, const music::Indexes& songs, Screen from)
+{
+    s_songs = songs;
+    s_songs_title = title;
+    s_songs_back = from;
+    s_songs_page = 0;
+    int playing = music::playing();
+    for (size_t i = 0; i < s_songs.size(); i++) {
+        if (s_songs[i] == playing) {
+            s_songs_page = (int)i / MUSIC_PAGE_ROWS;
+        }
+    }
+    go(Screen::MusicSongs);
+}
+
+static void show_groups(music::Group kind)
+{
+    s_group_kind = kind;
+    s_groups = music::library().groups(kind);
+    s_groups_page = 0;
+    go(Screen::MusicGroups);
+}
+
+// Plays songs[start] and the rest of the list after it; past the display lock (it stops a song)
+static void play_songs(const music::Indexes& songs, int start)
+{
+    if (songs.empty()) {
+        return;
+    }
+    music::Indexes copy = songs;
+    defer([copy, start]() { music::play(copy, start); });
+    go(Screen::NowPlaying);
+}
+
+// Reads the library: the card is mounted, the index of the chosen folder read (or the folder
+// scanned when there is none, it doesn't match, or `rescan`). quiet: no "Please wait" screen
+// (at boot). `then` runs on the app task when it is done, whatever happened.
+static void music_open(bool rescan, bool quiet, std::function<void()> then)
+{
+    struct Open {
+        music::Library lib;
+        music::GenreCache genres;
+        music::ScanResult scan;
+        esp_err_t mounted = ESP_FAIL;
+        bool from_index = false;
+        bool memory = true;
+        std::string folder;
+    };
+    if (s_music_opening) {
+        return;
+    }
+    uint32_t gen = s_generation;
+    auto* job = new Open();
+    job->folder = music::settings().folder.empty() ? "/" : music::settings().folder;
+    bool started = run_job(
+        [job, rescan]() {
+            job->mounted = music::mount();
+            if (job->mounted != ESP_OK) {
+                return;
+            }
+            music::load_genres(job->genres);
+            job->from_index = !rescan && music::load_index(job->folder, job->lib);
+            if (!job->from_index) {
+                job->memory = job->lib.reserve();
+                if (job->memory) {
+                    job->scan = music::scan(job->folder, job->lib, job->genres);
+                    if (job->scan.card) {
+                        music::save_index(job->folder, job->lib);
+                    }
+                }
+            }
+        },
+        [job, then, quiet, gen]() {
+            s_music_opening = false;
+            s_music_problem.clear();
+            if (job->mounted != ESP_OK) {
+                s_music_problem = "No SD card found. Put in a microSD card (FAT32) with your music, then choose "
+                                  "Settings > Scan the folder again.";
+            } else if (!job->memory) {
+                s_music_problem = "Not enough memory for the music library.";
+            } else if (!job->from_index && !job->scan.card) {
+                s_music_problem = "The music folder " + portal::printable(job->folder, 60) +
+                                  " isn't on this card. Choose another in Settings > Music folder.";
+            } else {
+                music::genres() = job->genres;
+                music::install(job->lib);
+                s_songs.clear();   // Lists of the old library's songs mean nothing now
+                s_groups.clear();
+                s_lookup_pos = 0;
+                int songs = music::library().size();
+                if (songs == 0) {
+                    s_music_problem = "No songs in " + music::folder_shown() +
+                                      ". The radio plays MP3, AAC, M4A, ALAC, FLAC, Ogg Vorbis, Opus, WAV and AMR files.";
+                } else if (!job->from_index) {
+                    std::string found = "Found " + plural(songs, "song", "songs") + " in " + music::folder_shown() + ".";
+                    if (job->scan.full) {
+                        found += " The library is full (" + std::to_string(music::MAX_TRACKS) + " songs): choose a smaller folder.";
+                    }
+                    if (job->scan.unreadable) {
+                        found += " " + plural(job->scan.unreadable, "file", "files") + " couldn't be read.";
+                    }
+                    if (job->scan.too_long) {
+                        found += " " + plural(job->scan.too_long, "file or folder", "files or folders") +
+                                 " left out (path too long, or more than " + std::to_string(music::MAX_FOLDER_DEPTH) +
+                                 " folders deep).";
+                    }
+                    s_notice.add((found + "\n").c_str());
+                }
+                s_lookup_at = now_ms() + 5000;   // Missing genres: looked up online soon
+            }
+            if (!s_music_problem.empty()) {
+                ESP_LOGW(TAG, "Music library not read");
+            }
+            delete job;
+            if (then && (quiet || gen == s_generation)) {
+                then();   // Unless the user left the "Please wait" screen meanwhile
+            } else {
+                refresh();
+            }
+        });
+    if (!started) {
+        delete job;
+        if (then) {
+            then();
+        }
+        return;
+    }
+    s_music_opening = true;
+    if (!quiet) {
+        s_music_scanned_shown = -1;
+        busy(rescan ? "Reading your music folder..." : "Reading the SD card...");
+    }
+}
+
+// The folder browser: lists `folder`'s folders (worker: the card is read)
+static void browse(const std::string& folder)
+{
+    auto* list = new std::vector<std::string>();
+    auto* ok = new bool(false);
+    bool started = run_job(
+        [folder, list, ok]() {
+            if (music::mount() == ESP_OK) {
+                *list = music::list_folders(folder, *ok);
+            }
+        },
+        [folder, list, ok]() {
+            if (*ok) {
+                s_folder = folder;
+                s_folders = *list;
+                s_folders_page = 0;
+                go(Screen::MusicFolder);
+            } else {
+                s_notice.add("The SD card couldn't be read. Is a card in the slot?\n");
+                go(Screen::MusicSettings);
+            }
+            delete list;
+            delete ok;
+        });
+    if (started) {
+        busy("Reading the SD card...");
+    } else {
+        delete list;
+        delete ok;
+    }
+}
+
+static std::string parent_folder(const std::string& folder)
+{
+    size_t slash = folder.find_last_of('/');
+    return slash == std::string::npos || slash == 0 ? "/" : folder.substr(0, slash);
+}
+
+// Saves the index and the genre cache after online lookups changed genres (worker)
+static void save_music()
+{
+    if (!music::loaded() || s_busy) {
+        return;
+    }
+    std::string folder = music::settings().folder.empty() ? "/" : music::settings().folder;
+    if (run_job([folder]() {
+                    music::save_index(folder, music::library());
+                    music::save_genres(music::genres());
+                },
+                []() {})) {
+        s_lookup_dirty = 0;
+    }
+}
+
+// One artist's genre from MusicBrainz, when songs have none (housekeeping, one at a time)
+static void lookup_next_genre()
+{
+    if (!music::loaded() || !music::settings().online || !s_link_up || s_busy || s_music_opening || !s_lookup_at ||
+        now_ms() < s_lookup_at) {
+        return;
+    }
+    music::GenreCache& cache = music::genres();
+    music::Library& lib = music::library();
+    s_lookup_pos = lib.next_without_genre(s_lookup_pos, [&cache](const char* artist) { return cache.known(artist); });
+    if (s_lookup_pos < 0) {
+        s_lookup_pos = 0;
+        s_lookup_at = 0;   // Every artist was asked about (until the next scan)
+        if (s_lookup_dirty) {
+            save_music();
+        }
+        return;
+    }
+    struct Lookup {
+        music_online_result_t result = MUSIC_ONLINE_ERROR;
+        char genre[MEDIA_GENRE_LEN] = "";
+        char name[MEDIA_NAME_LEN] = "";
+    };
+    std::string artist = lib.at(s_lookup_pos).artist;
+    auto* res = new Lookup();
+    bool started = run_job(
+        [artist, res]() {
+            res->result = music_online_artist(artist.c_str(), res->genre, sizeof(res->genre), res->name, sizeof(res->name));
+        },
+        [artist, res]() {
+            int64_t now = now_ms();
+            switch (res->result) {
+                case MUSIC_ONLINE_FOUND:
+                    music::library().set_artist_genre(artist, res->genre);
+                    if (res->name[0]) {
+                        music::library().set_artist_name(artist, res->name);
+                    }
+                    music::genres().put(res->name[0] ? res->name : artist, res->genre);
+                    s_lookup_dirty++;
+                    s_lookup_at = now + 1500;
+                    break;
+                case MUSIC_ONLINE_NONE:
+                    music::genres().put(artist, "");   // Not asked again
+                    s_lookup_dirty++;
+                    s_lookup_at = now + 1500;
+                    break;
+                case MUSIC_ONLINE_BUSY: s_lookup_at = now + 60000; break;
+                case MUSIC_ONLINE_ERROR: s_lookup_at = now + 30000; break;
+            }
+            delete res;
+            if (s_lookup_dirty >= 10) {
+                save_music();
+            }
+            if (s_screen == Screen::MusicGroups) {
+                s_groups = music::library().groups(s_group_kind);   // Genres move between groups
+                s_groups_page = std::min(s_groups_page, pages_of((int)s_groups.size()) - 1);
+            }
+            if (s_screen == Screen::Music || s_screen == Screen::MusicGroups || s_screen == Screen::MusicSongs) {
+                refresh();
+            }
+        });
+    if (!started) {
+        delete res;
+    }
+}
+
+// Songs without a genre (a count over the library, cheap enough for every redraw)
+static int songs_without_genre()
+{
+    int n = 0;
+    music::Library& lib = music::library();
+    for (int i = 0; i < lib.size(); i++) {
+        n += !lib.at(i).genre[0];
+    }
+    return n;
+}
+
+static void build_music_page(ui::Page& p)
+{
+    music::Library& lib = music::library();
+    switch (s_screen) {
+        case Screen::Music: {
+            p.title = "Music";
+            if (s_music_opening) {
+                p.info = "Reading the SD card...";
+                p.busy = true;
+            } else if (!s_music_problem.empty()) {
+                p.info = s_music_problem;
+            } else if (music::loaded()) {
+                p.info = plural(lib.size(), "song", "songs") + " in " + music::folder_shown() + " on the SD card.";
+                int left = music::settings().online && s_lookup_at ? songs_without_genre() : 0;
+                if (left) {
+                    p.info += "\nLooking up genres online for " + plural(left, "song", "songs") + " without one...";
+                }
+            }
+            int artists = music::loaded() ? (int)lib.groups(music::Group::Artist).size() : 0;
+            int albums = music::loaded() ? (int)lib.groups(music::Group::Album).size() : 0;
+            int genres = music::loaded() ? (int)lib.groups(music::Group::Genre).size() : 0;
+            p.rows = {
+                ui::row("1", "Songs", LV_SYMBOL_AUDIO, music::loaded() ? std::to_string(lib.size()) : "", ui::Mark::More),
+                ui::row("2", "Artists", LV_SYMBOL_LIST, artists ? std::to_string(artists) : "", ui::Mark::More),
+                ui::row("3", "Albums", LV_SYMBOL_DIRECTORY, albums ? std::to_string(albums) : "", ui::Mark::More),
+                ui::row("4", "Genres", LV_SYMBOL_SHUFFLE, genres ? std::to_string(genres) : "", ui::Mark::More),
+                ui::row("5", "Favorites", LV_SYMBOL_OK, std::to_string(lib.with_hashes(music::favorites()).size()),
+                        ui::Mark::More),
+                ui::row("6", "Search", LV_SYMBOL_EDIT, "title, artist or album", ui::Mark::More),
+                ui::row("7", "Shuffle all songs", LV_SYMBOL_SHUFFLE),
+            };
+            int playing = music::playing();
+            if (playing >= 0) {
+                bool fav = music::is_favorite(playing);
+                p.rows.push_back(ui::row("f", fav ? "Remove the song playing from favorites" : "Add the song playing to favorites",
+                                         LV_SYMBOL_OK, shorten(lib.at(playing).title, 40)));
+            }
+            p.rows.push_back(ui::row("8", "Settings", LV_SYMBOL_SETTINGS, "folder, shuffle, repeat", ui::Mark::More));
+            p.rows.push_back(ui::back_row());
+            break;
+        }
+
+        case Screen::MusicSongs: {
+            p.title = s_songs_title;
+            int count = (int)s_songs.size();
+            p.info = count ? page_info(s_songs_page, count) + plural(count, "song", "songs") : "No songs here.";
+            if (count) {
+                p.rows.push_back(ui::row("a", "Play all", LV_SYMBOL_PLAY));
+                p.rows.push_back(ui::row("s", "Shuffle all", LV_SYMBOL_SHUFFLE));
+            }
+            int first = s_songs_page * MUSIC_PAGE_ROWS;
+            int playing = music::playing();
+            for (int i = first; i < count && i < first + MUSIC_PAGE_ROWS; i++) {
+                if (s_songs[i] >= lib.size()) {
+                    continue;
+                }
+                const music::Track& t = lib.at(s_songs[i]);
+                bool here = s_songs[i] == playing;
+                p.rows.push_back(ui::row(std::to_string(i - first + 1), t.title, music::is_favorite(s_songs[i]) ? LV_SYMBOL_OK : LV_SYMBOL_AUDIO,
+                                         song_detail(t), here ? ui::Mark::Chosen : ui::Mark::None));
+                if (here) {
+                    p.selected = (int)p.rows.size() - 1;
+                }
+            }
+            add_pager(p, s_songs_page, count);
+            p.rows.push_back(ui::back_row());
+            break;
+        }
+
+        case Screen::MusicGroups: {
+            const char* what = s_group_kind == music::Group::Artist ? "Artists"
+                               : s_group_kind == music::Group::Album ? "Albums" : "Genres";
+            p.title = what;
+            int count = (int)s_groups.size();
+            std::string words = s_group_kind == music::Group::Artist ? "artists"
+                                : s_group_kind == music::Group::Album ? "albums" : "genres";
+            p.info = count ? page_info(s_groups_page, count) + std::to_string(count) + " " + words : "No songs yet.";
+            int first = s_groups_page * MUSIC_PAGE_ROWS;
+            for (int i = first; i < count && i < first + MUSIC_PAGE_ROWS; i++) {
+                const music::GroupEntry& g = s_groups[i];
+                if (g.first >= lib.size()) {
+                    continue;
+                }
+                const music::Track& t = lib.at(g.first);
+                std::string detail = plural(g.count, "song", "songs");
+                if (s_group_kind == music::Group::Album && t.artist[0]) {
+                    detail = std::string(t.artist) + "   " + detail;
+                }
+                p.rows.push_back(ui::row(std::to_string(i - first + 1), music::group_name(t, s_group_kind), NULL, detail,
+                                         ui::Mark::More));
+            }
+            add_pager(p, s_groups_page, count);
+            p.rows.push_back(ui::back_row());
+            break;
+        }
+
+        case Screen::MusicSearch:
+            p.title = "Search";
+            p.question = "Words in the title, artist or album";
+            p.hint = keys_hint("search", false);
+            p.max_len = 40;
+            break;
+
+        case Screen::MusicSettings: {
+            music::Settings& s = music::settings();
+            p.title = "Music settings";
+            p.info = "Genres missing from your files are looked up on musicbrainz.org (only the artist's name is sent).";
+            p.rows = {
+                ui::row("1", "Music folder", LV_SYMBOL_DIRECTORY, music::folder_shown(), ui::Mark::More),
+                ui::row("2", "Scan the folder again", LV_SYMBOL_REFRESH,
+                        music::loaded() ? plural(music::library().size(), "song", "songs") + " now" : ""),
+                ui::row("3", "Shuffle", LV_SYMBOL_SHUFFLE, s.shuffle ? "on" : "off", s.shuffle ? ui::Mark::On : ui::Mark::Off),
+                ui::row("4", "Repeat", LV_SYMBOL_LOOP, repeat_words(s.repeat)),
+                ui::row("5", "Look up missing genres online", LV_SYMBOL_WIFI, s.online ? "on" : "off",
+                        s.online ? ui::Mark::On : ui::Mark::Off),
+                ui::back_row(),
+            };
+            break;
+        }
+
+        case Screen::MusicFolder: {
+            p.title = "Music folder";
+            int count = (int)s_folders.size();
+            p.info = "On the SD card: " + (s_folder == "/" ? std::string("the top folder") : portal::printable(s_folder, 80)) +
+                     "\n" + page_info(s_folders_page, count) +
+                     (count ? "Open a folder, or use this one." : "No folders in it. Use this one?");
+            p.rows.push_back(ui::row("u", "Use this folder", LV_SYMBOL_OK));
+            if (s_folder != "/") {
+                p.rows.push_back(ui::row("b", "Up one level", LV_SYMBOL_UP));
+            }
+            int first = s_folders_page * MUSIC_PAGE_ROWS;
+            for (int i = first; i < count && i < first + MUSIC_PAGE_ROWS; i++) {
+                p.rows.push_back(ui::row(std::to_string(i - first + 1), portal::printable(s_folders[i], 60),
+                                         LV_SYMBOL_DIRECTORY, "", ui::Mark::More));
+            }
+            add_pager(p, s_folders_page, count);
+            p.rows.push_back(ui::back_row());
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+static void back();
+
+static void music_answer(const std::string& key, int n)
+{
+    music::Library& lib = music::library();
+    switch (s_screen) {
+        case Screen::Music:
+            if (key == "8") {
+                go(Screen::MusicSettings);
+                break;
+            }
+            if (!music::loaded() || lib.size() == 0) {
+                if (key >= "1" && key <= "7" && key.size() == 1) {
+                    s_notice.add(s_music_problem.empty() ? "No songs yet.\n" : (s_music_problem + "\n").c_str());
+                    render();
+                }
+                break;
+            }
+            if (key == "1") {
+                show_songs("Songs", lib.all(), Screen::Music);
+            } else if (key == "2") {
+                show_groups(music::Group::Artist);
+            } else if (key == "3") {
+                show_groups(music::Group::Album);
+            } else if (key == "4") {
+                show_groups(music::Group::Genre);
+            } else if (key == "5") {
+                music::Indexes favs = lib.with_hashes(music::favorites());
+                if (favs.empty()) {
+                    s_notice.add("No favorites yet. While a song plays, choose 'Add the song playing to favorites' "
+                                 "here (or press F on Now Playing).\n");
+                    render();
+                } else {
+                    show_songs("Favorites", favs, Screen::Music);
+                }
+            } else if (key == "6") {
+                go(Screen::MusicSearch);
+            } else if (key == "7") {
+                music::Indexes all = lib.all();
+                music::set_shuffle(true);
+                play_songs(all, (int)(esp_random() % all.size()));
+            } else if (key == "f" && music::playing() >= 0) {
+                int song = music::playing();
+                bool was = music::is_favorite(song);
+                if (!music::toggle_favorite(song)) {
+                    s_notice.add(("The favorites list is full (" + std::to_string(music::MAX_FAVORITES) + " songs).\n").c_str());
+                } else {
+                    s_notice.add(was ? "Removed from favorites.\n" : "Added to favorites.\n");
+                }
+                render();
+            }
+            break;
+
+        case Screen::MusicSongs: {
+            int count = (int)s_songs.size();
+            if (page_key_move(key, s_songs_page, count)) {
+                render();
+            } else if ((key == "a" || key == "s") && count) {
+                music::set_shuffle(key == "s");
+                play_songs(s_songs, key == "s" ? (int)(esp_random() % count) : 0);
+            } else if (n >= 1 && n <= MUSIC_PAGE_ROWS) {
+                int i = s_songs_page * MUSIC_PAGE_ROWS + n - 1;
+                if (i < count) {
+                    play_songs(s_songs, i);
+                }
+            }
+            break;
+        }
+
+        case Screen::MusicGroups: {
+            int count = (int)s_groups.size();
+            if (page_key_move(key, s_groups_page, count)) {
+                render();
+            } else if (n >= 1 && n <= MUSIC_PAGE_ROWS) {
+                int i = s_groups_page * MUSIC_PAGE_ROWS + n - 1;
+                if (i < count && s_groups[i].first < lib.size()) {
+                    const music::Track& t = lib.at(s_groups[i].first);
+                    show_songs(music::group_name(t, s_group_kind), lib.in_group(s_group_kind, s_groups[i].first),
+                               Screen::MusicGroups);
+                }
+            }
+            break;
+        }
+
+        case Screen::MusicSettings: {
+            music::Settings& s = music::settings();
+            if (key == "1") {
+                browse(s.folder.empty() ? "/" : s.folder);
+            } else if (key == "2") {
+                music_open(true, false, []() { go(Screen::Music); });
+            } else if (key == "3") {
+                music::set_shuffle(!s.shuffle);
+                render();
+            } else if (key == "4") {
+                music::set_repeat(s.repeat == music::Repeat::Off ? music::Repeat::All
+                                  : s.repeat == music::Repeat::All ? music::Repeat::One : music::Repeat::Off);
+                render();
+            } else if (key == "5") {
+                s.online = !s.online;
+                music::save_settings(s);
+                s_lookup_at = s.online ? now_ms() + 1000 : 0;
+                render();
+            }
+            break;
+        }
+
+        case Screen::MusicFolder: {
+            int count = (int)s_folders.size();
+            if (page_key_move(key, s_folders_page, count)) {
+                render();
+            } else if (key == "u") {
+                music::Settings& s = music::settings();
+                bool same = s.folder == s_folder || (s.folder.empty() && s_folder == "/");
+                s.folder = s_folder;
+                music::save_settings(s);
+                music_open(!same, false, []() { go(Screen::Music); });
+            } else if (key == "b" && s_folder != "/") {
+                browse(parent_folder(s_folder));
+            } else if (n >= 1 && n <= MUSIC_PAGE_ROWS) {
+                int i = s_folders_page * MUSIC_PAGE_ROWS + n - 1;
+                if (i < count) {
+                    browse((s_folder == "/" ? "" : s_folder) + "/" + s_folders[i]);
+                }
+            }
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+// Now Playing while a song plays
+static void music_now_playing(NowPlaying& np)
+{
+    const music::Queue& q = music::queue();
+    int song = music::playing();
+    if (song >= 0 && song < music::library().size()) {
+        const music::Track& t = music::library().at(song);
+        np.station = t.title;
+        np.song = t.artist[0] ? t.artist : "Unknown artist";
+        if (t.album[0]) {
+            np.song += std::string("  -  ") + t.album;
+        }
+        np.info = std::to_string(q.list_position() + 1) + " / " + std::to_string(q.size()) + "   " +
+                  media_format_name((media_format_t)t.format);
+        if (t.genre[0]) {
+            np.info += std::string("   ") + t.genre;
+        }
+        std::string total = music::duration_text(t.duration_ms);
+        std::string elapsed = music::duration_text(music::elapsed_ms());
+        np.info += "   " + (elapsed.empty() ? std::string("0:00") : elapsed) + (total.empty() ? "" : " / " + total);
+        if (music::is_favorite(song)) {
+            np.info += "   favorite";
+        }
+        if (q.shuffled()) {
+            np.info += "   shuffle";
+        }
+    }
+    np.muted = player_muted();
+    np.paused = player_paused();
+    if (!s_np_typed.empty()) {
+        np.status = "Go to song " + s_np_typed + "_   (Enter)";
+        return;
+    }
+    switch (player_status()) {
+        case PLAYER_CONNECTING: np.status = "Loading..."; break;
+        case PLAYER_UNAVAILABLE:
+            np.status = "This file can't be played - skipping it.";
+            np.status_warn = true;
+            break;
+        case PLAYER_IDLE: np.status = "End of the list - press Play to hear it again."; break;
+        case PLAYER_PAUSED: np.status = "Paused - press Play to listen again"; break;
+        case PLAYER_PLAYING: np.status = np.muted ? "Muted" : ""; break;
+    }
+}
+
+// The list behind the List button / Enter on Now Playing: the songs playing, or the stations
+static void open_list()
+{
+    if (music_active() && !music::queue().empty()) {
+        show_songs("Playing", music::queue().songs(), Screen::NowPlaying);
+    } else {
+        go(Screen::Stations);
+    }
+}
+
+// Music played last: the library is read at boot and the last song plays again
+static void music_resume(std::function<void()> then)
+{
+    music_open(false, true, [then]() {
+        music::Library& lib = music::library();
+        int last = lib.find_hash(music::settings().last_song);
+        if (last >= 0) {
+            music::Indexes all = lib.all();
+            int start = (int)(std::find(all.begin(), all.end(), (uint16_t)last) - all.begin());
+            defer([all, start]() { music::play(all, start); });
+            s_screen = Screen::NowPlaying;
+        }
+        player_set_hold(false);   // Without music the radio plays once its stations are in
+        if (last < 0) {
+            defer([]() { player_resume(); });
+        }
+        then();
+    });
+}
+
 // The page for the current screen
 static void build_page(ui::Page& p)
 {
@@ -432,12 +1166,13 @@ static void build_page(ui::Page& p)
             p.rows = {
                 ui::row("1", "Stations", LV_SYMBOL_LIST,
                         player_count() ? std::to_string(player_count()) + " stations" : "none yet", ui::Mark::More),
-                ui::row("2", "WiFi", LV_SYMBOL_WIFI, up ? shown(wifi::ssid()) : "not connected", ui::Mark::More),
-                ui::row("3", "Station search", LV_SYMBOL_DIRECTORY, search_summary(), ui::Mark::More),
-                ui::row("4", "Sign in to this network", LV_SYMBOL_RIGHT, up ? "cafe / hotel page" : "not connected",
+                ui::row("2", "Music", LV_SYMBOL_AUDIO, music_summary(), ui::Mark::More),
+                ui::row("3", "WiFi", LV_SYMBOL_WIFI, up ? shown(wifi::ssid()) : "not connected", ui::Mark::More),
+                ui::row("4", "Station search", LV_SYMBOL_DIRECTORY, search_summary(), ui::Mark::More),
+                ui::row("5", "Sign in to this network", LV_SYMBOL_RIGHT, up ? "cafe / hotel page" : "not connected",
                         ui::Mark::More),
-                ui::row("5", "Bluetooth", LV_SYMBOL_BLUETOOTH, bt_summary(), ui::Mark::More),
-                ui::row("6", "About", LV_SYMBOL_HOME, "", ui::Mark::More),
+                ui::row("6", "Bluetooth", LV_SYMBOL_BLUETOOTH, bt_summary(), ui::Mark::More),
+                ui::row("7", "About", LV_SYMBOL_HOME, "", ui::Mark::More),
                 ui::back_row("Now Playing"),
             };
             break;
@@ -623,6 +1358,8 @@ static void build_page(ui::Page& p)
             p.info += "Free memory: " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024) +
                       " KB internal, " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB PSRAM\n";
             p.info += "Bluetooth: " + bt_summary() + "\n";
+            p.info += "Music: " + music_summary() + (music::loaded() ? " in " + music::folder_shown() : "") +
+                      " (genres from musicbrainz.org)\n";
             p.info += std::string("Settings: ") + settings_nvs::partition() +
                       " partition, WiFi passwords and Bluetooth keys encrypted\n";
             p.info += "Stations from radio-browser.info";
@@ -681,6 +1418,15 @@ static void build_page(ui::Page& p)
             build_portal_page(p);
             break;
 
+        case Screen::Music:
+        case Screen::MusicSongs:
+        case Screen::MusicGroups:
+        case Screen::MusicSearch:
+        case Screen::MusicSettings:
+        case Screen::MusicFolder:
+            build_music_page(p);
+            break;
+
         case Screen::NowPlaying:
             break;
     }
@@ -699,7 +1445,6 @@ static void render()
     }
     if (s_screen == Screen::NowPlaying) {
         s_ui.show_now_playing();
-        s_ui.set_title(s_link_up ? "SimplrRadio" : "SimplrRadio - offline");
         refresh_now_playing();
         return;
     }
@@ -1374,11 +2119,18 @@ static void boot_start()
                     render();
                 } else {
                     s_booted = true;
-                    if (wifi::saved().empty()) {
-                        s_notice.add("Welcome! Pick your WiFi network to start listening.\n");
-                        scan_networks();
+                    auto join = []() {
+                        if (wifi::saved().empty()) {
+                            s_notice.add("Welcome! Pick your WiFi network to start listening.\n");
+                            scan_networks();
+                        } else {
+                            auto_connect(false);
+                        }
+                    };
+                    if (music::settings().music_last) {
+                        music_resume(join);   // Music played last: it plays again (no WiFi needed)
                     } else {
-                        auto_connect(false);
+                        join();
                     }
                 }
                 delete err;
@@ -1414,10 +2166,16 @@ static void answer(const std::string& raw)
             if (key == "1") {
                 go(Screen::Stations);
             } else if (key == "2") {
-                go(Screen::Wifi);
+                if (!music::loaded() && !s_music_opening) {
+                    music_open(false, false, []() { go(Screen::Music); });
+                } else {
+                    go(Screen::Music);
+                }
             } else if (key == "3") {
-                go(Screen::Search);
+                go(Screen::Wifi);
             } else if (key == "4") {
+                go(Screen::Search);
+            } else if (key == "5") {
                 if (!s_link_up) {
                     s_notice.add("Connect to a network first.\n");
                     render();
@@ -1425,9 +2183,9 @@ static void answer(const std::string& raw)
                     portal_wipe();
                     portal_load(NULL, false, true);
                 }
-            } else if (key == "5") {
-                go(Screen::Bluetooth);
             } else if (key == "6") {
+                go(Screen::Bluetooth);
+            } else if (key == "7") {
                 go(Screen::About);
             }
             break;
@@ -1581,6 +2339,14 @@ static void answer(const std::string& raw)
             break;
         }
 
+        case Screen::Music:
+        case Screen::MusicSongs:
+        case Screen::MusicGroups:
+        case Screen::MusicSettings:
+        case Screen::MusicFolder:
+            music_answer(key, n);
+            break;
+
         case Screen::PortalOption: {
             if (!portal_field_valid()) {
                 go(Screen::PortalPage);
@@ -1635,6 +2401,21 @@ static void submit()
                 connect_to(s_ssid, text, s_hidden);
             }
             break;
+
+        case Screen::MusicSearch: {
+            if (text.empty()) {
+                back();
+                break;
+            }
+            music::Indexes found = music::library().search(text);
+            if (found.empty()) {
+                s_notice.add(("No songs match \"" + portal::printable(text, 40) + "\".\n").c_str());
+                render();
+            } else {
+                show_songs("Search: " + portal::printable(text, 30), found, Screen::Music);
+            }
+            break;
+        }
 
         case Screen::SearchCountry: {
             std::transform(text.begin(), text.end(), text.begin(), ::toupper);
@@ -1716,7 +2497,19 @@ static void back()
         case Screen::Search:
         case Screen::About:
         case Screen::Bluetooth:
+        case Screen::Music:
             go(Screen::Menu);
+            break;
+        case Screen::MusicSongs:
+            go(s_songs_back);
+            break;
+        case Screen::MusicGroups:
+        case Screen::MusicSearch:
+        case Screen::MusicSettings:
+            go(Screen::Music);
+            break;
+        case Screen::MusicFolder:
+            go(Screen::MusicSettings);
             break;
         case Screen::BtScan:
         case Screen::BtForgetConfirm:
@@ -1810,7 +2603,14 @@ static void now_playing_key(uint32_t key)
     if (key == KEY_ENTER && !s_np_typed.empty()) {
         int n = number_value(s_np_typed);
         s_np_typed.clear();
-        if (n >= 1 && n <= player_count()) {
+        if (music_active()) {
+            const music::Queue& q = music::queue();
+            if (n >= 1 && n <= q.size()) {
+                music::Indexes songs = q.songs();
+                play_songs(songs, n - 1);
+                return;
+            }
+        } else if (n >= 1 && n <= player_count()) {
             player_select(n - 1);
         }
         refresh_now_playing();
@@ -1828,7 +2628,12 @@ static void now_playing_key(uint32_t key)
         case KEY_DOWN: case '-': case '_': player_set_volume(player_volume() - 5); break;
         case ' ': case 'p': case 'P': toggle_pause(); break;
         case 'm': case 'M': player_set_muted(!player_muted()); break;
-        case KEY_ENTER: case 's': case 'S': go(Screen::Stations); break;
+        case 'f': case 'F':
+            if (music::playing() >= 0) {
+                music::toggle_favorite(music::playing());
+            }
+            break;
+        case KEY_ENTER: case 's': case 'S': open_list(); return;
         case 'w': case 'W': go(Screen::Wifi); break;
         case KEY_ESC: case KEY_TAB: go(Screen::Menu); break;
         default: break;
@@ -1947,7 +2752,7 @@ static void on_button(int button)
         case NP_MUTE: player_set_muted(!player_muted()); break;
         case NP_VOL_DOWN: player_set_volume(player_volume() - 5); break;
         case NP_VOL_UP: player_set_volume(player_volume() + 5); break;
-        case NP_STATIONS: go(Screen::Stations); break;
+        case NP_STATIONS: open_list(); return;
         default: break;
     }
     if (s_screen == Screen::NowPlaying) {
@@ -2064,6 +2869,17 @@ static void housekeeping()
         s_reload_at = 0;
         load_stations();
     }
+    // Music: the scan's progress on "Please wait", then genres looked up in the background
+    if (s_music_opening && s_screen == Screen::Busy && music::scan_progress() != s_music_scanned_shown) {
+        s_music_scanned_shown = music::scan_progress();
+        s_busy_text = "Reading your music folder... " + plural(s_music_scanned_shown, "song", "songs") + " so far.";
+        render();
+    }
+    bool typing = s_screen == Screen::WifiPassword || s_screen == Screen::WifiHidden || s_screen == Screen::PortalField ||
+                  s_screen == Screen::Busy;
+    if (!typing && !s_loading_stations) {
+        lookup_next_genre();
+    }
     // Bluetooth: results to show, the page to refresh, and starting it once the radio is up
     uint32_t bv = bt_hid::version();
     if (bv != s_bt_version) {
@@ -2138,6 +2954,7 @@ extern "C" void app_main(void)
     if (player_init() != ESP_OK) {
         s_notice.add("The audio output failed to start.\n");
     }
+    player_set_hold(music::settings().music_last);   // Music resumes at boot rather than the radio
     wifi::on_link(on_link);
     s_bt_autostart = bt_store::enabled();   // Started once WiFi is up (Tab5: the C6 link)
 

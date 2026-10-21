@@ -1,9 +1,10 @@
 # SimplrRadio
 
-An internet radio for the **M5Stack Tab5** (with or without its keyboard) and the
+An internet radio and music player for the **M5Stack Tab5** (with or without its keyboard) and the
 **LilyGO T-Deck**. Join WiFi on the screen, pick from popular stations near you, and listen,
-with the station, the song and a live spectrum on the display. A Bluetooth keyboard or media
-remote can work it too.
+with the station, the song and a live spectrum on the display. Or play your own music from a
+microSD card (MP3, AAC, M4A, ALAC, FLAC, Ogg Vorbis, Opus, WAV, AMR), sorted by artist, album
+and genre. A Bluetooth keyboard or media remote can work it too.
 
 > SimplrRadio is a fork of [**esp32-p4-webradio**](https://github.com/dmatking/esp32-p4-webradio)
 > by [David M. King (@dmatking)](https://github.com/dmatking). Thanks to him for the original
@@ -82,14 +83,15 @@ Enter (or the on-screen keyboard's check mark).
    *Sign-in pages* below.
 2. **Stations**: the radio loads the most popular MP3 stations for a region from the
    [Radio Browser](https://www.radio-browser.info/) directory, and resumes the last one you
-   played. Choose **Menu** → **3 Station search** to pick the **country** (two letters, empty
+   played. Choose **Menu** → **4 Station search** to pick the **country** (two letters, empty
    for worldwide), the **state / region** (empty for the whole country) and **how many
    stations** (up to 60), then **Load stations now**. The default is the 60 most popular in
    Texas, US.
 
-The **Menu**: **1 Stations**, **2 WiFi** (scan and connect, saved networks, forget,
-disconnect, sign in), **3 Station search**, **4 Sign in to this network**, **5 Bluetooth**
-(keyboards and remotes) and **6 About** (versions, WiFi, Bluetooth, memory).
+The **Menu**: **1 Stations**, **2 Music** (songs on the SD card), **3 WiFi** (scan and connect,
+saved networks, forget, disconnect, sign in), **4 Station search**, **5 Sign in to this
+network**, **6 Bluetooth** (keyboards and remotes) and **7 About** (versions, WiFi, Bluetooth,
+music, memory).
 
 Saved WiFi passwords and Bluetooth pairing keys are encrypted on the device.
 
@@ -116,8 +118,45 @@ Saved WiFi passwords and Bluetooth pairing keys are encrypted on the device.
   then a row for each thing on it. Pick a row to tick a box, choose an option, fill in a field,
   press a button (such as *Connect*) or follow a link. **Start again** reloads and checks the
   connection, **0 Back** leaves. Once it is online the radio plays. You can open it any time
-  with **Menu** → **4 Sign in to this network**. Nothing from the page is saved, and pages
+  with **Menu** → **5 Sign in to this network**. Nothing from the page is saved, and pages
   that need JavaScript can't work - accept on your phone and use its hotspot instead.
+
+### Music from the SD card
+
+Put your music on a microSD card (FAT32), in any folders, and slide it into the device: the
+Tab5's card slot, or the T-Deck's.
+
+1. **Menu** → **2 Music**. The first time, the radio reads the whole card and lists every song
+   it can play: MP3, AAC, M4A (AAC or Apple Lossless), FLAC, Ogg Vorbis, Opus, WAV and AMR.
+   To use one folder only, choose **8 Settings** → **1 Music folder**, open folders until you
+   are in yours and pick **Use this folder**.
+2. Each song's **title, artist, album, genre, year and track number** come from its tags
+   (ID3, FLAC / Ogg comments, MP4 / iTunes tags, WAV info). When a file has none, they come
+   from its name and folders: `Artist/Album/03 - Title.mp3`, `Artist - Album/Title.flac` or
+   `Artist - Title.ogg` (a `CD1` / `Disc 2` folder is skipped), and names typed in all capitals
+   or all lower case get their capitals fixed.
+3. **Genres** missing from your files are looked up on the internet, artist by artist, in the
+   [MusicBrainz](https://musicbrainz.org/) music database, while the radio is on WiFi. Only the
+   artist's name is sent. Turn it off with **Settings** → **5 Look up missing genres online**.
+4. Pick **1 Songs**, **2 Artists**, **3 Albums**, **4 Genres**, **5 Favorites**, **6 Search**
+   (words from the title, artist or album) or **7 Shuffle all songs**. In a list of songs,
+   **Play all** and **Shuffle all** play the whole list, or pick a song to start there. Long
+   lists come in pages of 40: **Next page** / **Previous page**.
+5. **Now Playing** is the same as for the radio: the song's title, its artist and album, its
+   number in the list, format, genre and time, and the spectrum. Previous / next, pause / play,
+   volume, mute, swipes and Bluetooth media keys work on the songs; the list button opens the
+   songs playing. A pause keeps your place in the song, and songs keep playing without WiFi.
+6. **Favorites**: while a song plays, press **F** on Now Playing, or choose **Add the song
+   playing to favorites** in the Music page (up to 256).
+7. **Settings**: the music folder, **Scan the folder again** (after you add or remove songs),
+   **Shuffle** on / off, **Repeat** (off, the list, this song) and the online genres.
+
+Pick a station to go back to the radio. Whichever played last (a station or a song) plays
+again when the device starts. The library is kept on the card in a `.simplrradio` folder, so
+it isn't read again at every start; nothing else on the card is changed. Up to 3,000 songs and
+8 folders deep. Not playable: M4A files whose index comes after the audio (re-save them with
+"fast start"), 32-bit float WAV, sample rates above 96 kHz; a song that can't be played is
+skipped. Seeking within a song isn't available.
 
 ### Bluetooth keyboards and remotes
 
@@ -125,7 +164,7 @@ Both devices connect to **Bluetooth LE** keyboards, media remotes and page-turne
 Their keys work the radio: Play/Pause, next / previous, volume and mute on every screen, and
 arrows, Enter, Esc and typing in the menus (WiFi passwords too).
 
-1. **Menu** → **5 Bluetooth** → **1 Bluetooth** turns it on (it stays on after a restart).
+1. **Menu** → **6 Bluetooth** → **1 Bluetooth** turns it on (it stays on after a restart).
 2. **2 Pair a keyboard or remote**, put the device in pairing mode, and pick it from the
    list. A keyboard may be asked to type a 6-digit code shown on the screen, then Enter.
 3. From then on it connects by itself whenever it is switched on near the radio. Pick it in
@@ -141,12 +180,13 @@ its Bluetooth controller; if it doesn't, the page says Bluetooth didn't start.
 
 | Keys | Does |
 |---|---|
-| Left / Right | Previous / next station (in a text field: move the cursor) |
+| Left / Right | Previous / next station or song (in a text field: move the cursor) |
 | Up / Down | Volume up / down; move the highlight in a menu |
 | Space or P | Pause / play |
 | M | Mute / unmute |
-| A number, then Enter | Go to that station (in a menu: open that row) |
-| Enter or S | Station list |
+| F | Add the song playing to favorites (or remove it) |
+| A number, then Enter | Go to that station or song (in a menu: open that row) |
+| Enter or S | Station list (while music plays: the songs playing) |
 | W | WiFi |
 | Esc | Menu; back one level in a menu |
 | Ctrl+Del | Back to Now Playing from any screen |
@@ -163,13 +203,14 @@ the on-screen keyboard appears when there's something to type.
 
 | Input | Does |
 |---|---|
-| Trackball left / right | Previous / next station; back a level / open a row in a menu (in a text field: move the cursor) |
+| Trackball left / right | Previous / next station or song; back a level / open a row in a menu (in a text field: move the cursor) |
 | Trackball up / down | Volume up / down; move the highlight in a menu |
-| Press the trackball | Station list; open the highlighted row; Enter in a text field |
+| Press the trackball | Station list (while music plays: the songs playing); open the highlighted row; Enter in a text field |
 | Hold the trackball | Menu; back one level (the T-Deck's Esc) |
 | Space or P | Pause / play |
 | M | Mute / unmute |
-| A number, then Enter | Go to that station (in a menu: open that row) |
+| F | Add the song playing to favorites (or remove it) |
+| A number, then Enter | Go to that station or song (in a menu: open that row) |
 | S / W | Station list / WiFi |
 | Backspace | Delete a character; back one level in a menu |
 
@@ -187,11 +228,17 @@ Passwords are shown with the **Show** button next to the field.
 - **Bluetooth device won't pair**: put it in pairing mode again, and if it was paired with
   the radio before, forget it on both sides first. Keyboards type the code shown, then Enter.
 - **WiFi connects but no stations load** (cafe, hotel): the network wants you to sign in
-  first. Use **Menu** → **4 Sign in to this network**. *Nothing to fill in or press here*: the
+  first. Use **Menu** → **5 Sign in to this network**. *Nothing to fill in or press here*: the
   page needs JavaScript; sign in on a phone and use its hotspot.
 - **"The station list couldn't be loaded"**: no internet yet, or the station directory is
   busy; the radio tries again by itself, waiting longer each time.
 - **"WiFi didn't start"**: choose **Try again**, or restart the radio.
+- **"No SD card found"**: the card must be FAT32. Cards of 64 GB and more come formatted
+  exFAT, which the radio can't read: format it FAT32 on a computer (this erases it). Then
+  **Music** → **Settings** → **Scan the folder again**.
+- **Songs missing from the library**: only the formats above are read; a path longer than
+  about 190 characters or more than 8 folders deep is left out (the scan says how many). After
+  adding songs, choose **Scan the folder again**.
 - **Black screen**: the Tab5 starts its screen and WiFi the way SimplrSSH's Tab5 firmware does, on every
   Tab5 screen version. If yours stays dark, please report it with the serial log (USB-C,
   115200 baud).
@@ -218,6 +265,18 @@ Passwords are shown with the **Show** button next to the field.
 - **[LVGL](https://lvgl.io/)** (MIT): the graphics library behind every screen.
 - **[esp-libhelix-mp3](https://github.com/chmorgan/esp-libhelix-mp3)** by Chris Morgan: the
   Helix MP3 decoder (RealNetworks) packaged for ESP-IDF.
+- **[esp_audio_codec](https://components.espressif.com/components/espressif/esp_audio_codec)**
+  by Espressif ([esp-adf-libs](https://github.com/espressif/esp-adf-libs), Espressif Modified
+  MIT: for Espressif chips): every music file decoder (MP3, AAC / HE-AAC, ALAC, FLAC, Vorbis,
+  Opus, PCM / ADPCM / G.711 WAV, AMR) and the container parsers (M4A, Ogg, WAV), the same ones
+  [ESP-ADF](https://github.com/espressif/esp-adf)'s music players use. The music player plays
+  SD cards the way ESP-ADF's `music_player` example does, with its decode loop.
+- **[MusicBrainz](https://musicbrainz.org/)** (MetaBrainz Foundation): the open music
+  database the missing genres come from. Its core data is CC0; its tags and genres are
+  CC BY-NC-SA 3.0. Please consider supporting it.
+- The ID3 genre list is the ID3v1 list with Winamp's extensions, as every tag reader knows it.
+  GPL players (ESP32-audioI2S, arduino-audio-tools, ESP8266Audio) were looked at, not used: the
+  radio's tag reader is its own, small and bounded for files nobody checked.
 - **[M5Stack](https://m5stack.com/)**: the Tab5, its keyboard, and the keyboard firmware's
   register protocol.
 - **[LilyGO](https://lilygo.cc/)**: the T-Deck and its pin map.

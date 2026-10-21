@@ -9,6 +9,7 @@
 //   Audio   : MAX98357A I2S amplifier and speaker (BCK 7, WS 5, DOUT 6): no codec, so volume
 //             and mute are applied to the samples, and the one speaker gets left + right
 //   WiFi    : the ESP32-S3's own; Bluetooth LE too (NimBLE with the built-in controller)
+//   SD card : microSD on SPI, sharing the display's bus (SCK 40, MOSI 41, MISO 38), CS 39
 
 #include <string.h>
 
@@ -22,6 +23,9 @@
 #include "bsp/display.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_lvgl_port.h"
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "driver/sdspi_host.h"
 
 #include "audio.h"
 #include "board.h"
@@ -202,6 +206,49 @@ const board_ui_t *board_ui(void)
     };
     return &ui;
 }
+
+// -- SD card --------------------------------------------------------------
+// On the display's SPI bus, which the BSP set up with MISO (board_display_start comes first):
+// each device has its own chip select and the SPI driver keeps their transfers apart. 20 MHz,
+// as LilyGO's examples run the card next to the display.
+#define SD_MOUNT_POINT "/sdcard"
+
+static sdmmc_card_t *s_card;
+
+esp_err_t board_sd_mount(void)
+{
+    if (s_card) {
+        return ESP_OK;
+    }
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = BSP_LCD_SPI_NUM;
+    host.max_freq_khz = 20000;
+    sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
+    dev.gpio_cs = PIN_SD_CS;
+    dev.host_id = BSP_LCD_SPI_NUM;
+    const esp_vfs_fat_sdmmc_mount_config_t mount = {
+        .format_if_mount_failed = false,   // Never erase someone's card
+        .max_files = 4,
+        .allocation_unit_size = 16 * 1024,
+    };
+    esp_err_t err = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &dev, &mount, &s_card);
+    if (err != ESP_OK) {
+        s_card = NULL;
+        ESP_LOGW(TAG, "No SD card (%s)", esp_err_to_name(err));
+    }
+    return err;
+}
+
+void board_sd_unmount(void)
+{
+    if (s_card) {
+        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
+        s_card = NULL;
+    }
+}
+
+bool board_sd_mounted(void) { return s_card != NULL; }
+const char *board_sd_root(void) { return SD_MOUNT_POINT; }
 
 // -- Keyboard and trackball -----------------------------------------------
 // On the I2C bus the touch panel opened (board_display_start)
