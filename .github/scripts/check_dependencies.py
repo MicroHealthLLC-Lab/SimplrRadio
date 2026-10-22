@@ -135,7 +135,7 @@ def check(root, log, committed_lock, committed_cfg, generated_cfg, board):
         for name in sorted(set(installed) | set(locked)):
             if installed.get(name) != locked.get(name):
                 problems.append(f"{name}: installed {installed.get(name)} but the lock has {locked.get(name)} "
-                                f"(run BOARD={board} idf.py update-dependencies and commit the lock)")
+                                f"(run scripts/update-lock.sh {board} and commit the lock)")
 
     compiled = compiled_versions(root)
     drift_rows = []
@@ -150,7 +150,9 @@ def check(root, log, committed_lock, committed_cfg, generated_cfg, board):
                     f"dependencies.lock.{board}")
         else:
             drift_rows.append((name, lock_v, built_v, "NEW"))
-            problems.append(f"{name}: the build compiles {built_v} but dependencies.lock.{board} pins {lock_v}")
+            problems.append(f"{name}: the build compiles {built_v} but dependencies.lock.{board} pins {lock_v} "
+                            f"(pin {name} to {built_v} in main/idf_component.{board}.yml, then run "
+                            f"scripts/update-lock.sh {board}; or review it into KNOWN_DRIFT)")
     for name in sorted(set(known_drift) - {r[0] for r in drift_rows}):
         warning(f"{name} no longer drifts: remove it from KNOWN_DRIFT in check_dependencies.py")
 
