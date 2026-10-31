@@ -116,7 +116,7 @@ class Tasks(unittest.TestCase):
     def test_task_stacks_match_budget(self):
         found = {}
         for code in SRC.values():
-            for name, stack in re.findall(r'xTaskCreate\w*\(\s*\w+\s*,\s*"(\w+)"\s*,\s*(\w+)', code):
+            for name, stack in re.findall(r'(?:xTaskCreate\w*|task_stack_start)\(\s*\w+\s*,\s*"(\w+)"\s*,\s*(\w+)', code):
                 found[name] = int(stack) if stack.isdigit() else stack
         self.assertEqual(found, self.STACKS, "a new or resized task needs AI_RULES.md updated")
         self.assertIn("#define TASK_STACK      (16 * 1024)", repo.read("main", "stream.c"))

@@ -54,6 +54,8 @@ void player_release(void);
 void player_set_hold(bool hold);
 
 player_status_t player_status(void);
+// Why the station is unavailable ("HTTP 403", "no connection"...), "" if unknown
+const char *player_error(void);
 void player_title(char *buf, size_t len);   // Current song (ICY), "" if none
 
 int player_volume(void);

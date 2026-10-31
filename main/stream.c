@@ -5,6 +5,7 @@
 // Writes raw audio bytes into a FreeRTOS stream buffer; the MP3 decode
 // task reads from the other side.
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -17,6 +18,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "task_stack.h"
 
 #define TAG "stream"
 
@@ -54,6 +56,7 @@ typedef struct {
 static volatile uint32_t s_gen;
 static volatile bool s_running;     // The current stream's task is alive
 static volatile bool s_failed;      // Connection refused / non-2xx (e.g. 403)
+static char s_error[32];            // Why, for the screen (stream_error)
 static volatile bool s_connected;   // Got a 2xx and is reading audio
 static volatile bool s_task_done = true;
 
@@ -189,17 +192,20 @@ static esp_err_t http_event(esp_http_client_event_t *evt)
 
 // -- Streaming task ---------------------------------------------------
 // The task's end: shared state is only the current stream's to change
-static void finish(stream_ctx_t *ctx, bool failed)
+static void finish(stream_ctx_t *ctx, const char *error)
 {
     if (current(ctx)) {
-        if (failed) s_failed = true;
+        if (error) {
+            snprintf(s_error, sizeof(s_error), "%s", error);
+            s_failed = true;
+        }
         s_connected = false;
         s_running = false;
         s_task_done = true;
     }
     ESP_LOGI(TAG, "Stream task exiting");
     heap_caps_free(ctx);
-    vTaskDelete(NULL);
+    task_stack_exit();
 }
 
 static void stream_task(void *arg)
@@ -218,7 +224,7 @@ static void stream_task(void *arg)
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
-        finish(ctx, true);
+        finish(ctx, "no memory");
         return;
     }
 
@@ -226,7 +232,8 @@ static void stream_task(void *arg)
     esp_http_client_set_header(client, "Icy-MetaData", "1");
 
     // Open with redirect handling (esp_http_client_open doesn't auto-follow)
-    bool failed = false;
+    const char *error = NULL;
+    char http_error[16];
     uint8_t *buf = NULL;
     int max_redirects = 5;
     int status = 0;
@@ -235,7 +242,7 @@ static void stream_task(void *arg)
         esp_err_t err = esp_http_client_open(client, 0);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
-            failed = true;
+            error = err == ESP_ERR_NO_MEM ? "no memory" : "no connection";
             goto done;
         }
         esp_http_client_fetch_headers(client);
@@ -244,7 +251,7 @@ static void stream_task(void *arg)
         if (status == 301 || status == 302 || status == 307 || status == 308) {
             if (esp_http_client_set_redirection(client) != ESP_OK) {
                 ESP_LOGE(TAG, "Redirect failed");
-                failed = true;
+                error = "bad redirect";
                 goto done;
             }
             // Re-set ICY header (lost after redirect)
@@ -258,13 +265,14 @@ static void stream_task(void *arg)
     }
     if (status < 200 || status >= 300) {
         ESP_LOGE(TAG, "HTTP error %d", status);
-        failed = true;
+        snprintf(http_error, sizeof(http_error), "HTTP %d", status);
+        error = http_error;
         goto done;
     }
 
     buf = malloc(READ_BUF_SIZE);
     if (!buf) {
-        failed = true;
+        error = "no memory";
         goto done;
     }
     s_connected = true;
@@ -285,7 +293,7 @@ done:
     free(buf);
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    finish(ctx, failed);
+    finish(ctx, error);
 }
 
 // -- Public API -------------------------------------------------------
@@ -294,10 +302,12 @@ void stream_start(const char *url, icy_meta_cb_t meta_cb)
 {
     stream_stop();
     s_failed = false;
+    s_error[0] = '\0';
     // Station URLs come from a public directory: only plain web streams are opened
     if (!url || (strncasecmp(url, "http://", 7) != 0 && strncasecmp(url, "https://", 8) != 0) ||
         strnlen(url, STREAM_URL_MAX) >= STREAM_URL_MAX) {
         ESP_LOGW(TAG, "Refusing stream URL");
+        snprintf(s_error, sizeof(s_error), "%s", "bad link");
         s_failed = true;
         return;
     }
@@ -308,6 +318,7 @@ void stream_start(const char *url, icy_meta_cb_t meta_cb)
     stream_ctx_t *ctx = heap_caps_calloc(1, sizeof(stream_ctx_t), MALLOC_CAP_SPIRAM);
     if (!ctx || !s_ringbuf || !s_ring_lock) {
         heap_caps_free(ctx);
+        snprintf(s_error, sizeof(s_error), "%s", "no memory");
         s_failed = true;
         return;
     }
@@ -318,8 +329,9 @@ void stream_start(const char *url, icy_meta_cb_t meta_cb)
 
     s_running   = true;
     s_task_done = false;   // Before the task exists: a stop right after start waits for it
-    if (xTaskCreate(stream_task, "stream", TASK_STACK, ctx, 5, NULL) != pdPASS) {
+    if (task_stack_start(stream_task, "stream", TASK_STACK, ctx, 5) != pdPASS) {
         ESP_LOGE(TAG, "No memory for the stream task");
+        snprintf(s_error, sizeof(s_error), "%s", "no memory");
         heap_caps_free(ctx);
         s_running = false;
         s_task_done = true;
@@ -359,6 +371,11 @@ bool stream_is_active(void)
 bool stream_failed(void)
 {
     return s_failed;
+}
+
+const char *stream_error(void)
+{
+    return s_error;
 }
 
 bool stream_connected(void)

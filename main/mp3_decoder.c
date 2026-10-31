@@ -9,6 +9,7 @@
 #include "stream.h"
 #include "audio.h"
 #include "spectrum.h"
+#include "task_stack.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -52,7 +53,7 @@ static void decode_task(void *arg)
             s_running = false;
             s_done = true;
         }
-        vTaskDelete(NULL);
+        task_stack_exit();
         return;
     }
 
@@ -185,7 +186,7 @@ cleanup:
         s_done = true;
     }
     ESP_LOGI(TAG, "Decode task exiting");
-    vTaskDelete(NULL);
+    task_stack_exit();
 }
 
 void mp3dec_start(void)
@@ -194,7 +195,7 @@ void mp3dec_start(void)
     s_has_audio = false;
     s_running = true;
     s_done = false;
-    if (xTaskCreate(decode_task, "mp3dec", TASK_STACK, (void *)(uintptr_t)s_gen, 6, NULL) != pdPASS) {
+    if (task_stack_start(decode_task, "mp3dec", TASK_STACK, (void *)(uintptr_t)s_gen, 6) != pdPASS) {
         ESP_LOGE(TAG, "No memory for the decode task");
         s_running = false;
         s_done = true;
