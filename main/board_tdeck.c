@@ -250,6 +250,10 @@ esp_err_t board_sd_mount(void)
         ESP_LOGW(TAG, "SD card at %d kHz: %s", FREQ_KHZ[i], esp_err_to_name(err));
     }
     if (err != ESP_OK) {
+        // A failed mount leaves the card's chip select a floating input (the SD driver's
+        // cleanup): drive it high again, or the card may take the display's data as commands
+        gpio_set_level(PIN_SD_CS, 1);
+        gpio_set_direction(PIN_SD_CS, GPIO_MODE_OUTPUT);
         s_card = NULL;
         ESP_LOGW(TAG, "No SD card (%s)", esp_err_to_name(err));
     }
