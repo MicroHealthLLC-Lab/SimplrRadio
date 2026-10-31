@@ -428,6 +428,10 @@ static std::string bt_status()
             return "Off. Turn it on to use a Bluetooth keyboard or remote: media keys, arrows and typing "
                    "work the radio. (Bluetooth LE only: headphones and speakers can't connect.)";
         case bt_hid::State::Unavailable:
+            if (board_wifi_firmware()) {
+                return std::string("Bluetooth didn't start: the WiFi chip's firmware (") + board_wifi_firmware() +
+                       ") has no Bluetooth controller available.";
+            }
             return "Bluetooth didn't start on this radio (its radio chip has no Bluetooth controller "
                    "available).";
         case bt_hid::State::Scanning: return "Looking for keyboards and remotes...";
