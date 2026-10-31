@@ -41,4 +41,7 @@ jobs:
       aws_region: ${{ vars.AWS_REGION_EAST_1 }}
       zap_target: ${{ vars.ZAP_TARGET_URL }}
       baseline_ref: ${{ github.base_ref }}
-    secrets: inherit
+    # Passed by name: `secrets: inherit` only reaches a workflow in the same organization, and
+    # sast-rules is in MicroHealthLLC while this repository is in MicroHealthLLC-Lab
+    secrets:
+      AWS_ROLE: ${{ secrets.AWS_ROLE }}
