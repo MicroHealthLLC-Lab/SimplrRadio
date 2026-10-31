@@ -26,6 +26,7 @@
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdspi_host.h"
+#include "driver/spi_common.h"
 #include "esp_rom_gpio.h"
 #include "soc/spi_periph.h"
 
@@ -35,6 +36,8 @@
 
 static const char *TAG = "board_tdeck";
 
+static void sd_wake(void);
+
 const char *board_name(void) { return "LilyGO T-Deck"; }
 
 #define PIN_POWER_ON    GPIO_NUM_10
@@ -42,6 +45,8 @@ const char *board_name(void) { return "LilyGO T-Deck"; }
 #define PIN_LORA_CS     GPIO_NUM_9
 #define PIN_TFT_CS      GPIO_NUM_12
 #define PIN_SPI_MISO    GPIO_NUM_38
+#define PIN_SPI_MOSI    GPIO_NUM_41   // Shared with the display (CONFIG_BSP_DISPLAY_MOSI_GPIO)
+#define PIN_SPI_SCK     GPIO_NUM_40   // (CONFIG_BSP_DISPLAY_SCLK_GPIO)
 #define PIN_TOUCH_INT   GPIO_NUM_16
 #define PIN_I2S_BCK     GPIO_NUM_7
 #define PIN_I2S_WS      GPIO_NUM_5
@@ -72,6 +77,9 @@ void board_init_power(void)
     gpio_reset_pin(PIN_SPI_MISO);
     gpio_set_direction(PIN_SPI_MISO, GPIO_MODE_INPUT);
     gpio_set_pull_mode(PIN_SPI_MISO, GPIO_PULLUP_ONLY);
+
+    // The SD card into SPI mode before the display's traffic starts (see "SD card" below)
+    sd_wake();
 
     // Trackball directions and press (GPIO 0): inputs with pull-ups
     gpio_config_t in = {
@@ -210,51 +218,94 @@ const board_ui_t *board_ui(void)
 }
 
 // -- SD card --------------------------------------------------------------
-// On the display's SPI bus (board_display_start comes first): each device has its own chip
-// select and the SPI driver keeps their transfers apart. The BSP starts the bus without MISO
-// (the display only listens), so the card's data line is joined to the bus here, or every
-// reply would read as a constant and the card driver would work from garbage. 20 MHz (4 MHz when
-// the card doesn't keep up), as LilyGO runs the card next to the display.
+// As SimplrSSH's T-Deck: the card shares SCK / MOSI / MISO with the display, CS 39.
+//  - At boot, before the display starts, the card is mounted once on SPI3 (a bus of its own,
+//    with MISO) and released (sd_wake). That init puts the card in SPI mode: a card left in its
+//    power-up SD mode ignores its CS pin and takes the display's traffic as commands.
+//  - At run time it is mounted on the display's SPI2. The BSP starts that bus without MISO (the
+//    display only listens), so GPIO 38 is routed to its input through the GPIO matrix; through
+//    the matrix 10 MHz is the reliable clock (4 MHz if the card still doesn't keep up).
+//  - The SD driver leaves CS a floating input when it lets go of the card (a failed mount, an
+//    unmount): it is driven high again, so the card never listens to the display.
 #define SD_MOUNT_POINT "/sdcard"
 
 static sdmmc_card_t *s_card;
+
+static const esp_vfs_fat_sdmmc_mount_config_t SD_MOUNT = {
+    .format_if_mount_failed = false,   // Never erase someone's card
+    .max_files = 4,
+    .allocation_unit_size = 16 * 1024,
+};
+
+static void sd_deselect(void)
+{
+    gpio_set_level(PIN_SD_CS, 1);   // Level first, so CS never pulses low
+    gpio_config_t out = {
+        .pin_bit_mask = 1ULL << PIN_SD_CS,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&out);
+}
+
+static esp_err_t sd_mount_on(spi_host_device_t bus, int freq_khz)
+{
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = bus;
+    host.max_freq_khz = freq_khz;
+    sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
+    dev.gpio_cs = PIN_SD_CS;
+    dev.host_id = bus;
+    esp_err_t err = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &dev, &SD_MOUNT, &s_card);
+    if (err != ESP_OK) {
+        s_card = NULL;
+        sd_deselect();
+    }
+    return err;
+}
+
+// Boot, before the display: the card is put in SPI mode on a bus of its own, then released
+static void sd_wake(void)
+{
+    const spi_bus_config_t bus = {
+        .mosi_io_num = PIN_SPI_MOSI,
+        .miso_io_num = PIN_SPI_MISO,
+        .sclk_io_num = PIN_SPI_SCK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 4000,
+    };
+    if (spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO) != ESP_OK) {
+        return;
+    }
+    esp_err_t err = sd_mount_on(SPI3_HOST, 10000);
+    if (err == ESP_OK) {
+        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
+        s_card = NULL;
+        sd_deselect();
+    } else {
+        ESP_LOGW(TAG, "No SD card at boot (%s)", esp_err_to_name(err));
+    }
+    spi_bus_free(SPI3_HOST);
+}
 
 esp_err_t board_sd_mount(void)
 {
     if (s_card) {
         return ESP_OK;
     }
-    // GPIO 38 is already an input with a pull-up (board_init_power): route it to the bus's MISO
+    // The card's data-out pin to the display bus's input (the bus has no MISO of its own)
+    gpio_reset_pin(PIN_SPI_MISO);
+    gpio_set_direction(PIN_SPI_MISO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(PIN_SPI_MISO, GPIO_PULLUP_ONLY);
     esp_rom_gpio_connect_in_signal(PIN_SPI_MISO, spi_periph_signal[BSP_LCD_SPI_NUM].spiq_in, false);
-    sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
-    dev.gpio_cs = PIN_SD_CS;
-    dev.host_id = BSP_LCD_SPI_NUM;
-    const esp_vfs_fat_sdmmc_mount_config_t mount = {
-        .format_if_mount_failed = false,   // Never erase someone's card
-        .max_files = 4,
-        .allocation_unit_size = 16 * 1024,
-    };
-    // 20 MHz first; some cards don't keep up on the long shared bus, so 4 MHz next (still several
-    // times what a FLAC file needs). ESP_FAIL means the card answered but holds no FAT file
-    // system: a slower clock won't change that.
-    static const int FREQ_KHZ[] = {20000, 4000};
-    esp_err_t err = ESP_FAIL;
-    for (size_t i = 0; i < sizeof(FREQ_KHZ) / sizeof(FREQ_KHZ[0]); i++) {
-        sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-        host.slot = BSP_LCD_SPI_NUM;
-        host.max_freq_khz = FREQ_KHZ[i];
-        err = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &dev, &mount, &s_card);
-        if (err == ESP_OK || err == ESP_FAIL) {
-            break;
-        }
-        ESP_LOGW(TAG, "SD card at %d kHz: %s", FREQ_KHZ[i], esp_err_to_name(err));
+    // ESP_FAIL: the card answered but holds no FAT file system; a slower clock won't change that
+    esp_err_t err = sd_mount_on(BSP_LCD_SPI_NUM, 10000);
+    if (err != ESP_OK && err != ESP_FAIL) {
+        ESP_LOGW(TAG, "SD card at 10 MHz: %s", esp_err_to_name(err));
+        err = sd_mount_on(BSP_LCD_SPI_NUM, 4000);
     }
     if (err != ESP_OK) {
-        // A failed mount leaves the card's chip select a floating input (the SD driver's
-        // cleanup): drive it high again, or the card may take the display's data as commands
-        gpio_set_level(PIN_SD_CS, 1);
-        gpio_set_direction(PIN_SD_CS, GPIO_MODE_OUTPUT);
-        s_card = NULL;
         ESP_LOGW(TAG, "No SD card (%s)", esp_err_to_name(err));
     }
     return err;
@@ -265,6 +316,7 @@ void board_sd_unmount(void)
     if (s_card) {
         esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
         s_card = NULL;
+        sd_deselect();
     }
 }
 
