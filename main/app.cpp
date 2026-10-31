@@ -146,6 +146,7 @@ static UiView s_ui;
 static Screen s_screen = Screen::Boot;
 static ui::Page s_page;                 // What the screen shows (menus, prompts)
 static ui::Notice s_notice;             // Results and errors, shown on the next page
+static std::string s_last_restart;      // Why the radio last restarted, if not a normal start (About)
 static std::string s_typed;             // Row number being typed
 static int64_t s_typed_ms;
 static uint32_t s_generation;           // Bumped when a screen is left: stale job results are dropped
@@ -1382,6 +1383,9 @@ static void build_page(ui::Page& p)
             p.info += "Free memory: " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024) +
                       " KB internal, " + std::to_string(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB PSRAM\n";
             p.info += "Bluetooth: " + bt_summary() + "\n";
+            if (!s_last_restart.empty()) {
+                p.info += s_last_restart + "\n";
+            }
             p.info += "Music: " + music_summary() + (music::loaded() ? " in " + music::folder_shown() : "") +
                       " (genres from musicbrainz.org)\n";
             p.info += std::string("Settings: ") + settings_nvs::partition() +
@@ -2956,7 +2960,8 @@ extern "C" void app_main(void)
     char crash[160];
     crash_note_take(crash, sizeof(crash));
     if (crash[0]) {
-        s_notice.add((std::string(crash) + "\n").c_str());
+        s_last_restart = crash;
+        s_notice.add((s_last_restart + "\n").c_str());
     }
 
     s_events = xQueueCreate(32, sizeof(Event));
