@@ -54,7 +54,7 @@ static esp_err_t on_event(esp_http_client_event_t *evt)
 // GET `url`; the HTTP status (0 without an answer), the body in r
 static int get(const char *url, reply_t *r)
 {
-    char agent[96];
+    char agent[128];   // The text below (66) and a version of up to 32 + 1
     snprintf(agent, sizeof(agent), "SimplrRadio/%s ( https://github.com/MicroHealthLLC-Lab/SimplrRadio )",
              esp_app_get_description()->version);
     r->len = 0;
