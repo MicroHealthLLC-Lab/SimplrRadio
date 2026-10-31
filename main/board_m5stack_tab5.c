@@ -182,7 +182,13 @@ const char *board_wifi_firmware(void)
 }
 
 // Bluetooth LE through the C6 as well: esp_hosted carries HCI over the same SDIO link, NimBLE
-// runs here. The C6's firmware must have its Bluetooth controller (setup() waits up to 5 s).
+// runs here. The C6's firmware must have a Bluetooth controller.
+//
+// Newer C6 firmware starts its controller when asked (an RPC). Older firmware, as Tab5s ship
+// with, doesn't know that RPC and leaves each try to time out (5 s, while setup() counts only
+// its 100 ms pauses towards its 5 s limit: minutes in all); its controller, when built in,
+// starts with the C6. So the RPC gets two tries, then NimBLE is bound to the controller as it
+// is, and if none answers, NimBLE's sync times out (bt_hid.cpp).
 esp_err_t board_bt_prepare(void)
 {
     esp_err_t err = board_wifi_prepare();
@@ -190,9 +196,16 @@ esp_err_t board_bt_prepare(void)
         return err;
     }
     esp_hosted_bt_host_stack_cfg_t cfg = ESP_HOSTED_BT_HOST_STACK_CONFIG_DEFAULT();
+    cfg.controller_ready_timeout_ms = 100;
     err = esp_hosted_bt_host_stack_setup(&cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "C6 Bluetooth controller not available: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "C6 didn't start Bluetooth on request (%s); using its controller as it is",
+                 esp_err_to_name(err));
+        cfg.bring_up_controller = false;
+        err = esp_hosted_bt_host_stack_setup(&cfg);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "C6 Bluetooth link not available: %s", esp_err_to_name(err));
         return ESP_ERR_NOT_SUPPORTED;
     }
     return ESP_OK;
