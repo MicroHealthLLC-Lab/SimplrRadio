@@ -11,6 +11,10 @@ dependencies:
   # works with the C6 firmware the Tab5 ships with (0.0.6+, 1.x, 2.x), so it is never updated.
   espressif/esp_hosted: '==3.0.9'
   espressif/esp_wifi_remote: '==1.6.5'
+  # Not used directly: m5stack_tab5 -> esp_video -> esp_cam_sensor (camera) asks for '>=0.0.5'.
+  # The component manager's second, Kconfig-aware pass lifts it to the newest release whatever
+  # the lock says, so it is pinned to that release and the lock and the build agree
+  espressif/esp_sccb_intf: '==1.0.0'
   # Local music files (music_decoder.c): Espressif's decoders and container parsers (MP3, AAC,
   # M4A, FLAC, ALAC, Vorbis, Opus, WAV, AMR, TS). 2.5.0: 2.6.x needs an ESP32-P4 rev 3 minimum
   # (sdkconfig.tab5 supports rev 1), and the headers are the same

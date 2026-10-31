@@ -367,6 +367,9 @@ static void refresh_now_playing()
             case PLAYER_CONNECTING: np.status = "Connecting..."; break;
             case PLAYER_UNAVAILABLE:
                 np.status = "This station is unavailable right now - try the next one.";
+                if (player_error()[0]) {
+                    np.status = std::string("Station unavailable (") + player_error() + ") - try the next one.";
+                }
                 np.status_warn = true;
                 break;
             case PLAYER_IDLE: np.status = "Stopped"; break;

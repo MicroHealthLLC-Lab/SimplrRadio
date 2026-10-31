@@ -91,19 +91,25 @@ jobs:
             sleep $((attempt * 15))
           done
           exit 1
-      # One board at a time from an empty managed_components/ (the boards' components differ)
+      # One board at a time from an empty managed_components/ (the boards' components differ).
+      # Every board is checked before the step fails, so one board's drift doesn't hide another's.
       - name: Resolve components and check them, both boards
         run: |
+          failed=0
           for board in tab5 tdeck; do
             rm -rf managed_components
             cp "dependencies.lock.$board" "$RUNNER_TEMP/dependencies.lock.$board"
             cp "sdkconfig.$board" "$RUNNER_TEMP/sdkconfig.$board"
-            docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e "BOARD=$board" -v "$PWD:/project" -w /project \
-              "$IDF_IMAGE" bash -c 'idf.py -B "build-$BOARD" reconfigure \
-                > "reconfigure-$BOARD.log" 2>&1' || { tail -50 "reconfigure-$board.log"; exit 1; }
+            if ! docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e "BOARD=$board" -v "$PWD:/project" -w /project \
+              "$IDF_IMAGE" bash -c 'idf.py -B "build-$BOARD" reconfigure > "reconfigure-$BOARD.log" 2>&1'; then
+              tail -50 "reconfigure-$board.log"
+              failed=1
+              continue
+            fi
             python3 .github/scripts/check_dependencies.py --board "$board" "reconfigure-$board.log" \
-              "$RUNNER_TEMP/dependencies.lock.$board" "$RUNNER_TEMP/sdkconfig.$board" "sdkconfig.$board"
+              "$RUNNER_TEMP/dependencies.lock.$board" "$RUNNER_TEMP/sdkconfig.$board" "sdkconfig.$board" || failed=1
           done
+          exit "$failed"
 
   # b) lint: workflows (actionlint, pinned binary checked against its SHA-256), Python
   #    (ruff, pinned by hash) and C / C++ (cppcheck; any warning or error fails).

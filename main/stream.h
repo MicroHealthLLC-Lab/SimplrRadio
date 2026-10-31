@@ -36,6 +36,9 @@ bool stream_is_active(void);
 // (e.g. HTTP 403) - i.e. the station did not serve a playable stream.
 bool stream_failed(void);
 
+// Why it failed, for the screen ("HTTP 403", "no connection", "no memory"...); "" if it didn't.
+const char *stream_error(void);
+
 // True once the server answered 2xx and audio bytes are flowing.
 bool stream_connected(void);
 

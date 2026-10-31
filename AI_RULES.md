@@ -157,6 +157,10 @@ Tab5, the same esp_hosted start (by the app once the C6 is powered, never before
   plus LVGL's (8 KB), esp_hosted's (Tab5), the main task (16 KB, runs the app) and, while
   Bluetooth is on, NimBLE's host task (6 KB) and on the T-Deck the S3's controller task. No
   other long-lived tasks: the T-Deck's trackball is counted by interrupts and polled by the app.
+- On the T-Deck (ESP32-S3) `stream` and `mp3dec` have their stacks in PSRAM (`task_stack.h`):
+  the S3's internal RAM can't hold them next to WiFi, TLS and the display. Such a task must never
+  write flash or drive the SD card. WiFi's code runs from flash there (`CONFIG_ESP_WIFI_IRAM_OPT=n`)
+  for the same reason.
 - WiFi runs without modem sleep (streaming); while Bluetooth is on it uses modem sleep, which
   ESP-IDF's WiFi / Bluetooth coexistence needs (`wifi::set_power_save`).
 - Big buffers go to PSRAM (`MALLOC_CAP_SPIRAM`).

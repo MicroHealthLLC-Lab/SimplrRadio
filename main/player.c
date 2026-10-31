@@ -326,6 +326,8 @@ void player_tick(void)
 
 player_status_t player_status(void) { return music_active() ? (player_status_t)music_status() : s_status; }
 
+const char *player_error(void) { return stream_error(); }
+
 void player_title(char *buf, size_t len)
 {
     if (!len) {

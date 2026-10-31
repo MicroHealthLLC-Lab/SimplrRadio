@@ -26,6 +26,8 @@
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdspi_host.h"
+#include "esp_rom_gpio.h"
+#include "soc/spi_periph.h"
 
 #include "audio.h"
 #include "board.h"
@@ -208,9 +210,11 @@ const board_ui_t *board_ui(void)
 }
 
 // -- SD card --------------------------------------------------------------
-// On the display's SPI bus, which the BSP set up with MISO (board_display_start comes first):
-// each device has its own chip select and the SPI driver keeps their transfers apart. 20 MHz,
-// as LilyGO's examples run the card next to the display.
+// On the display's SPI bus (board_display_start comes first): each device has its own chip
+// select and the SPI driver keeps their transfers apart. The BSP starts the bus without MISO
+// (the display only listens), so the card's data line is joined to the bus here, or every
+// reply would read as a constant and the card driver would work from garbage. 20 MHz, as
+// LilyGO's examples run the card next to the display.
 #define SD_MOUNT_POINT "/sdcard"
 
 static sdmmc_card_t *s_card;
@@ -220,6 +224,8 @@ esp_err_t board_sd_mount(void)
     if (s_card) {
         return ESP_OK;
     }
+    // GPIO 38 is already an input with a pull-up (board_init_power): route it to the bus's MISO
+    esp_rom_gpio_connect_in_signal(PIN_SPI_MISO, spi_periph_signal[BSP_LCD_SPI_NUM].spiq_in, false);
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = BSP_LCD_SPI_NUM;
     host.max_freq_khz = 20000;

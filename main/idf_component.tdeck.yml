@@ -12,9 +12,9 @@ dependencies:
   espressif/esp_lvgl_port: '==2.9.0'
   # Not used directly: esp_bsp_generic needs them. led_strip is pinned to what the component
   # manager's second, Kconfig-aware pass compiles, so the lock and the build agree. (That pass
-  # also lifts cmake_utilities 0.5.3 to 1.1.1, which can't be pinned: the first pass needs 0.x for
+  # also lifts cmake_utilities 0.5.3 to its newest release (1.3.0), which can't be pinned: the first pass needs 0.x for
   # esp_lcd_ili9341. It is a reviewed KNOWN_DRIFT in .github/scripts/check_dependencies.py.)
-  espressif/led_strip: '==3.1.0~1'
+  espressif/led_strip: '==3.1.1'
   espressif/button: '==4.2.1'
   # Local music files (music_decoder.c): Espressif's decoders and container parsers (MP3, AAC,
   # M4A, FLAC, ALAC, Vorbis, Opus, WAV, AMR, TS). 2.5.0: 2.6.x needs an ESP32-P4 rev 3 minimum
