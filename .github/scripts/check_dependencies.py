@@ -37,9 +37,9 @@ import sys
 KNOWN_DRIFT = {}
 # T-Deck: the first pass needs cmake_utilities 0.x for esp_lcd_ili9341 (an esp_bsp_generic
 # dependency); the second pass drops that driver (the T-Deck's panel is an ST7789) and lifts
-# cmake_utilities, a CMake helper with no firmware code, to 1.1.1. It can't be pinned in the
+# cmake_utilities, a CMake helper with no firmware code, to its newest release (1.3.0). It can't be pinned in the
 # manifest without breaking the first pass.
-KNOWN_DRIFT_TDECK = {"espressif/cmake_utilities": ("0.5.3", "1.1.1")}
+KNOWN_DRIFT_TDECK = {"espressif/cmake_utilities": ("0.5.3", "1.3.0")}
 BOARDS = {
     "tab5": (KNOWN_DRIFT, ["sdkconfig.defaults", "sdkconfig.defaults.tab5"]),
     "tdeck": (KNOWN_DRIFT_TDECK, ["sdkconfig.defaults", "sdkconfig.defaults.tdeck"]),
