@@ -55,7 +55,7 @@ static esp_err_t on_event(esp_http_client_event_t *evt)
 static int get(const char *url, reply_t *r)
 {
     char agent[96];
-    snprintf(agent, sizeof(agent), "SimplrRadio/%s ( https://github.com/MicroHealthLLC/SimplrRadio )",
+    snprintf(agent, sizeof(agent), "SimplrRadio/%s ( https://github.com/MicroHealthLLC-Lab/SimplrRadio )",
              esp_app_get_description()->version);
     r->len = 0;
     esp_http_client_config_t config = {
