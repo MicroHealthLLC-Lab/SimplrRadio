@@ -22,6 +22,7 @@
 #include "board.h"
 #include "bt_hid.hpp"
 #include "bt_store.hpp"
+#include "crash_note.h"
 #include "keys.h"
 #include "music_online.h"
 #include "music_player.h"
@@ -2951,6 +2952,11 @@ extern "C" void app_main(void)
         s_notice.add("Settings can't be saved on this device.\n");
     } else if (nvs == settings_nvs::InitResult::REFORMATTED) {
         s_notice.add("Saved settings were unreadable and have been reset.\n");
+    }
+    char crash[160];
+    crash_note_take(crash, sizeof(crash));
+    if (crash[0]) {
+        s_notice.add((std::string(crash) + "\n").c_str());
     }
 
     s_events = xQueueCreate(32, sizeof(Event));

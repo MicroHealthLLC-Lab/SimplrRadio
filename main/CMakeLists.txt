@@ -24,6 +24,7 @@ idf_component_register(
         ${BOARD_SRCS}
         "bt_hid.cpp"
         "bt_store.cpp"
+        "crash_note.c"
         "hid_keymap.c"
         "hid_report.c"
         "lv_mem_psram.c"
@@ -72,9 +73,13 @@ idf_component_register(
         espressif__esp_audio_codec
         mbedtls
         nvs_flash
+        spi_flash
         ${BOARD_REQUIRES}
 )
 
 # LVGL's allocator (lv_mem_psram.c) is only referenced from the lvgl library, which links
 # after this one: keep it in the image
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u lv_malloc_core")
+
+# A crash's reason is kept for the screen after the restart (crash_note.c)
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler")
