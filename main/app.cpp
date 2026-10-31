@@ -564,6 +564,19 @@ static void play_songs(const music::Indexes& songs, int start)
     go(Screen::NowPlaying);
 }
 
+// Why the card couldn't be mounted, for the screen. ESP_FAIL: the card answered but holds no
+// FAT file system (FAT32 or FAT16; exFAT, which cards over 32 GB come with, isn't built in);
+// anything else: no card answered.
+static std::string card_problem(esp_err_t err)
+{
+    if (err == ESP_FAIL) {
+        return "The SD card isn't FAT32. Cards over 32 GB come as exFAT, which the radio can't read: "
+               "format it as FAT32 on a computer.";
+    }
+    return std::string("No SD card found (") + esp_err_to_name(err) +
+           "). Put in a microSD card (FAT32) with your music.";
+}
+
 // Reads the library: the card is mounted, the index of the chosen folder read (or the folder
 // scanned when there is none, it doesn't match, or `rescan`). quiet: no "Please wait" screen
 // (at boot). `then` runs on the app task when it is done, whatever happened.
@@ -606,8 +619,7 @@ static void music_open(bool rescan, bool quiet, std::function<void()> then)
             s_music_opening = false;
             s_music_problem.clear();
             if (job->mounted != ESP_OK) {
-                s_music_problem = "No SD card found. Put in a microSD card (FAT32) with your music, then choose "
-                                  "Settings > Scan the folder again.";
+                s_music_problem = card_problem(job->mounted) + " Then choose Settings > Scan the folder again.";
             } else if (!job->memory) {
                 s_music_problem = "Not enough memory for the music library.";
             } else if (!job->from_index && !job->scan.card) {
@@ -669,30 +681,34 @@ static void browse(const std::string& folder)
 {
     auto* list = new std::vector<std::string>();
     auto* ok = new bool(false);
+    auto* mounted = new esp_err_t(ESP_OK);
     bool started = run_job(
-        [folder, list, ok]() {
-            if (music::mount() == ESP_OK) {
+        [folder, list, ok, mounted]() {
+            *mounted = music::mount();
+            if (*mounted == ESP_OK) {
                 *list = music::list_folders(folder, *ok);
             }
         },
-        [folder, list, ok]() {
+        [folder, list, ok, mounted]() {
             if (*ok) {
                 s_folder = folder;
                 s_folders = *list;
                 s_folders_page = 0;
                 go(Screen::MusicFolder);
             } else {
-                s_notice.add("The SD card couldn't be read. Is a card in the slot?\n");
+                s_notice.add(((*mounted != ESP_OK ? card_problem(*mounted) : "The SD card couldn't be read.") + "\n").c_str());
                 go(Screen::MusicSettings);
             }
             delete list;
             delete ok;
+            delete mounted;
         });
     if (started) {
         busy("Reading the SD card...");
     } else {
         delete list;
         delete ok;
+        delete mounted;
     }
 }
 

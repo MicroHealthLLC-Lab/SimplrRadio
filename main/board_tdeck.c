@@ -213,8 +213,8 @@ const board_ui_t *board_ui(void)
 // On the display's SPI bus (board_display_start comes first): each device has its own chip
 // select and the SPI driver keeps their transfers apart. The BSP starts the bus without MISO
 // (the display only listens), so the card's data line is joined to the bus here, or every
-// reply would read as a constant and the card driver would work from garbage. 20 MHz, as
-// LilyGO's examples run the card next to the display.
+// reply would read as a constant and the card driver would work from garbage. 20 MHz (4 MHz when
+// the card doesn't keep up), as LilyGO runs the card next to the display.
 #define SD_MOUNT_POINT "/sdcard"
 
 static sdmmc_card_t *s_card;
@@ -226,9 +226,6 @@ esp_err_t board_sd_mount(void)
     }
     // GPIO 38 is already an input with a pull-up (board_init_power): route it to the bus's MISO
     esp_rom_gpio_connect_in_signal(PIN_SPI_MISO, spi_periph_signal[BSP_LCD_SPI_NUM].spiq_in, false);
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = BSP_LCD_SPI_NUM;
-    host.max_freq_khz = 20000;
     sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
     dev.gpio_cs = PIN_SD_CS;
     dev.host_id = BSP_LCD_SPI_NUM;
@@ -237,7 +234,21 @@ esp_err_t board_sd_mount(void)
         .max_files = 4,
         .allocation_unit_size = 16 * 1024,
     };
-    esp_err_t err = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &dev, &mount, &s_card);
+    // 20 MHz first; some cards don't keep up on the long shared bus, so 4 MHz next (still several
+    // times what a FLAC file needs). ESP_FAIL means the card answered but holds no FAT file
+    // system: a slower clock won't change that.
+    static const int FREQ_KHZ[] = {20000, 4000};
+    esp_err_t err = ESP_FAIL;
+    for (size_t i = 0; i < sizeof(FREQ_KHZ) / sizeof(FREQ_KHZ[0]); i++) {
+        sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+        host.slot = BSP_LCD_SPI_NUM;
+        host.max_freq_khz = FREQ_KHZ[i];
+        err = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &dev, &mount, &s_card);
+        if (err == ESP_OK || err == ESP_FAIL) {
+            break;
+        }
+        ESP_LOGW(TAG, "SD card at %d kHz: %s", FREQ_KHZ[i], esp_err_to_name(err));
+    }
     if (err != ESP_OK) {
         s_card = NULL;
         ESP_LOGW(TAG, "No SD card (%s)", esp_err_to_name(err));
