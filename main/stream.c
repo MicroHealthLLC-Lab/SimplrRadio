@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/semphr.h"
+#include "freertos/idf_additions.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
@@ -313,7 +314,13 @@ void stream_start(const char *url, icy_meta_cb_t meta_cb)
     }
     if (!s_ringbuf) {
         s_ring_lock = xSemaphoreCreateMutex();
+#if CONFIG_IDF_TARGET_ESP32S3
+        // FreeRTOS objects come from internal RAM, and the S3 has no 64 KB of it to spare once
+        // WiFi and the display run: the buffer goes to PSRAM (only tasks touch it)
+        s_ringbuf = xStreamBufferCreateWithCaps(RING_BUF_SIZE, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
         s_ringbuf = xStreamBufferCreate(RING_BUF_SIZE, 1);
+#endif
     }
     stream_ctx_t *ctx = heap_caps_calloc(1, sizeof(stream_ctx_t), MALLOC_CAP_SPIRAM);
     if (!ctx || !s_ringbuf || !s_ring_lock) {

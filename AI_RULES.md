@@ -98,6 +98,7 @@ partition, the Tab5 bring-up, the launcher image and the CI pipelines.
 | `main/tdeck_keyboard.c` | T-Deck keyboard (I2C) and trackball |
 | `main/tdeck_keymap.c` | T-Deck keyboard bytes and trackball press (host-tested) |
 | `main/lv_mem_psram.c` | LVGL's allocator: PSRAM first |
+| `main/crash_note.c` | Why the radio last restarted (a crash's reason, task, address), shown after the restart |
 
 Board code sits behind `board.h` and `audio.h`; shared code has no pins, fonts or board
 names. Fonts, sizes and key names for hints come from `board_ui()`. The build picks the board
