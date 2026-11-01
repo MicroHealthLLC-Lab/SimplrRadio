@@ -110,7 +110,7 @@ class Settings(unittest.TestCase):
 
 class Tasks(unittest.TestCase):
     # AI_RULES.md, Memory and tasks
-    STACKS = {"worker": 12288, "stream": "TASK_STACK", "mp3dec": "TASK_STACK", "filedec": "TASK_STACK",
+    STACKS = {"worker": "WORKER_STACK", "stream": "TASK_STACK", "mp3dec": "TASK_STACK", "filedec": "TASK_STACK",
               "hp_detect": 3072}
 
     def test_task_stacks_match_budget(self):
@@ -120,6 +120,8 @@ class Tasks(unittest.TestCase):
             for name, stack in re.findall(create, code):
                 found[name] = int(stack) if stack.isdigit() else stack
         self.assertEqual(found, self.STACKS, "a new or resized task needs AI_RULES.md updated")
+        self.assertIn("#define WORKER_STACK 20480", repo.read("main", "app.cpp"))
+        self.assertIn("#define WORKER_STACK 12288", repo.read("main", "app.cpp"))
         self.assertIn("#define TASK_STACK      (16 * 1024)", repo.read("main", "stream.c"))
         self.assertIn("#define TASK_STACK      (16 * 1024)", repo.read("main", "mp3_decoder.c"))
         self.assertIn("#define TASK_STACK      (16 * 1024)", repo.read("main", "music_decoder.c"))

@@ -153,7 +153,7 @@ Tab5, the same esp_hosted start (by the app once the C6 is powered, never before
   library 3000 songs in PSRAM, song paths 192 bytes, music folders 8 deep and 200 per listing,
   favorites 256, online genres 1000 artists, MusicBrainz reply 32 KB in PSRAM, tag values 512
   bytes, comment blocks 4 KB, decoded music frames 64 KB in PSRAM).
-- Tasks and stacks: `worker` 12 KB, `stream` 16 KB, `mp3dec` 16 KB, `filedec` 16 KB (while a
+- Tasks and stacks: `worker` 12 KB (20 KB on the T-Deck: Xtensa calls take more stack), `stream` 16 KB, `mp3dec` 16 KB, `filedec` 16 KB (while a
   song plays; the radio's `stream` and `mp3dec` don't run then), `hp_detect` 3 KB (Tab5),
   plus LVGL's (8 KB), esp_hosted's (Tab5), the main task (16 KB, runs the app) and, while
   Bluetooth is on, NimBLE's host task (6 KB) and on the T-Deck the S3's controller task. No
