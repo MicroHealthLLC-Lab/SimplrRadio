@@ -145,6 +145,14 @@ enum class Screen {
 static UiView s_ui;
 static Screen s_screen = Screen::Boot;
 static ui::Page s_page;                 // What the screen shows (menus, prompts)
+// The worker's stack: the SD card, WiFi and HTTP jobs run on it. The S3's windowed Xtensa calls
+// take more stack than the P4's RISC-V for the same code (the SD card over SPI is the deepest)
+#if CONFIG_IDF_TARGET_ESP32S3
+#define WORKER_STACK 20480
+#else
+#define WORKER_STACK 12288
+#endif
+
 static ui::Notice s_notice;             // Results and errors, shown on the next page
 static std::string s_last_restart;      // Why the radio last restarted, if not a normal start (About)
 static std::string s_typed;             // Row number being typed
@@ -2957,7 +2965,7 @@ extern "C" void app_main(void)
     } else if (nvs == settings_nvs::InitResult::REFORMATTED) {
         s_notice.add("Saved settings were unreadable and have been reset.\n");
     }
-    char crash[160];
+    char crash[224];
     crash_note_take(crash, sizeof(crash));
     if (crash[0]) {
         s_last_restart = crash;
@@ -2966,7 +2974,7 @@ extern "C" void app_main(void)
 
     s_events = xQueueCreate(32, sizeof(Event));
     s_jobs = xQueueCreate(4, sizeof(Job*));
-    xTaskCreate(worker_task, "worker", 12288, NULL, 5, NULL);
+    xTaskCreate(worker_task, "worker", WORKER_STACK, NULL, 5, NULL);
 
     if (!disp) {
         // Nothing can be set up or shown without the screen; the log says why
